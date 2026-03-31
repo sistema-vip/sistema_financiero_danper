@@ -1,0 +1,577 @@
+"use client";
+import React, { useState, useEffect } from 'react';
+import { SUPABASE_URL, SUPABASE_HEADERS } from '@/app/config';
+
+export default function AdminFinanzasPage() {
+  const [cajasBD, setCajasBD] = useState<any[]>([]);
+  const [clasificacionesBD, setClasificacionesBD] = useState<any[]>([]);
+  const [proveedoresBD, setProveedoresBD] = useState<any[]>([]);
+  const [clientesBD, setClientesBD] = useState<any[]>([]);
+  const [nroRecibo, setNroRecibo] = useState<string>("00000"); 
+  const [isSaving, setIsSaving] = useState(false);
+  const [ticketImpresion, setTicketImpresion] = useState<any>(null);
+  const [saldoActual, setSaldoActual] = useState<number | null>(null);
+  const [mostrarBuscador, setMostrarBuscador] = useState(false);
+
+  // Modales
+  const [modalProvOpen, setModalProvOpen] = useState(false);
+  const [nuevoProv, setNuevoProv] = useState({ 
+    codigo: '', razon_social: '', nombre_comercial: '', rif: '', direccion: '', telefono: '', correo: '',
+    tipo: 'HOTEL', pais: '', ciudad: '' 
+  });
+  
+  const [modalClienteOpen, setModalClienteOpen] = useState(false);
+  const [nuevoCliente, setNuevoCliente] = useState({ nombre_razon: '', rif_cedula: '', telefono: '', email: '' });
+
+  // Estado principal
+  const [movimiento, setMovimiento] = useState({
+    fecha: new Date().toISOString().split('T')[0], caja_id: '', caja_destino_id: '', referencia: '',
+    persona: '', monto: '', moneda: 'Bs', tasa: '36,500', tipo: 'Recibo de Ingreso', clasificacion: '', descripcion: '' 
+  });
+
+  useEffect(() => {
+    cargarCajas(); cargarClasificaciones(); cargarProveedores(); cargarClientes(); obtenerUltimoRecibo();
+  }, []);
+
+  useEffect(() => {
+    if (!movimiento.caja_id || cajasBD.length === 0) { setSaldoActual(null); return; }
+    const calcularSaldoEnVivo = async () => {
+      try {
+        const caja = cajasBD.find(c => c.id.toString() === movimiento.caja_id);
+        if (!caja) return;
+        let saldo = parseFloat(caja.saldo_inicial || 0);
+        const res = await fetch(`${SUPABASE_URL}/rest/v1/movimientos?caja_id=eq.${movimiento.caja_id}&select=monto,tipo`, { headers: SUPABASE_HEADERS });
+        if (res.ok) {
+          const movs = await res.json();
+          movs.forEach((m: any) => {
+            if (m.tipo === 'Recibo de Ingreso') saldo += parseFloat(m.monto || 0);
+            else saldo -= parseFloat(m.monto || 0);
+          });
+        }
+        setSaldoActual(saldo);
+      } catch (error) { console.error(error); }
+    };
+    calcularSaldoEnVivo();
+  }, [movimiento.caja_id, cajasBD, isSaving]);
+
+  const cargarCajas = async () => { const res = await fetch(`${SUPABASE_URL}/rest/v1/cajas?select=*&order=nombre.asc`, { headers: SUPABASE_HEADERS }); if (res.ok) setCajasBD(await res.json()); };
+  const cargarClasificaciones = async () => { const res = await fetch(`${SUPABASE_URL}/rest/v1/clasificaciones?select=*&order=nombre.asc`, { headers: SUPABASE_HEADERS }); if (res.ok) setClasificacionesBD(await res.json()); };
+  const cargarProveedores = async () => { const res = await fetch(`${SUPABASE_URL}/rest/v1/proveedores?select=*&order=razon_social.asc`, { headers: SUPABASE_HEADERS }); if (res.ok) setProveedoresBD(await res.json()); };
+  const cargarClientes = async () => { const res = await fetch(`${SUPABASE_URL}/rest/v1/clientes?select=*&order=nombre_razon.asc`, { headers: SUPABASE_HEADERS }); if (res.ok) setClientesBD(await res.json()); };
+
+  const obtenerUltimoRecibo = async () => {
+    const response = await fetch(`${SUPABASE_URL}/rest/v1/movimientos?select=nro_recibo&order=nro_recibo.desc&limit=1`, { headers: SUPABASE_HEADERS });
+    const data = await response.json();
+    if (response.ok && data.length > 0) setNroRecibo((parseInt(data[0].nro_recibo, 10) + 1).toString().padStart(5, '0'));
+    else setNroRecibo("00001");
+  };
+
+  const agregarClasificacion = async () => {
+    const nueva = window.prompt("➕ Escribe la nueva clasificación (Ej: COBRANZA, BOLETO):");
+    if (!nueva || nueva.trim() === '') return;
+    const nombreMayus = nueva.trim().toUpperCase();
+    if (clasificacionesBD.some(c => c.nombre === nombreMayus)) return alert("⚠️ Ya existe.");
+    try {
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/clasificaciones`, { method: 'POST', headers: SUPABASE_HEADERS, body: JSON.stringify({ nombre: nombreMayus }) });
+      if (res.ok) { cargarClasificaciones(); setMovimiento({...movimiento, clasificacion: nombreMayus}); } 
+    } catch (e) {}
+  };
+
+  const eliminarClasificacion = async () => {
+    if (!movimiento.clasificacion || movimiento.clasificacion === 'TRF INTERNA') return;
+    if (!window.confirm(`¿Eliminar: "${movimiento.clasificacion}"?`)) return;
+    const clasifObj = clasificacionesBD.find(c => c.nombre === movimiento.clasificacion);
+    if (!clasifObj) return;
+    try {
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/clasificaciones?id=eq.${clasifObj.id}`, { method: 'DELETE', headers: SUPABASE_HEADERS });
+      if (res.ok) { setMovimiento({...movimiento, clasificacion: ''}); cargarClasificaciones(); }
+    } catch (e) {}
+  };
+
+  // MAGIA: Formateador Inteligente de RIF y Cédula (en el modal de finanzas)
+  const manejarCambioRifNuevoProv = (e: React.ChangeEvent<HTMLInputElement>) => {
+    let valorRif = e.target.value.toUpperCase().replace(/[^JVEGP0-9]/g, '');
+    if (valorRif.length > 1) {
+      valorRif = valorRif.substring(0, 1) + '-' + valorRif.substring(1);
+    }
+    if (valorRif.length > 10) {
+      valorRif = valorRif.substring(0, 10) + '-' + valorRif.substring(10, 11);
+    }
+    if (valorRif.length > 12) {
+      valorRif = valorRif.substring(0, 12);
+    }
+
+    const soloNumeros = valorRif.replace(/\D/g, '').substring(0, 8);
+    setNuevoProv({ ...nuevoProv, rif: valorRif, codigo: soloNumeros });
+  };
+
+  const crearProveedor = async () => {
+    if (!nuevoProv.razon_social || !nuevoProv.rif) return alert("Razón Social y RIF son obligatorios");
+    try {
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/proveedores`, {
+        method: 'POST', headers: { ...SUPABASE_HEADERS, "Prefer": "return=representation" },
+        body: JSON.stringify({ 
+          ...nuevoProv, 
+          razon_social: nuevoProv.razon_social.toUpperCase(), 
+          rif: nuevoProv.rif.toUpperCase(),
+          pais: nuevoProv.pais.toUpperCase(),
+          ciudad: nuevoProv.ciudad.toUpperCase()
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setProveedoresBD([...proveedoresBD, data[0]]); 
+        setMovimiento({ ...movimiento, persona: data[0].razon_social }); 
+        setModalProvOpen(false);
+        setNuevoProv({ codigo: '', razon_social: '', nombre_comercial: '', rif: '', direccion: '', telefono: '', correo: '', tipo: 'HOTEL', pais: '', ciudad: '' });
+      }
+    } catch (e) {}
+  };
+
+  const crearCliente = async () => {
+    if (!nuevoCliente.nombre_razon || !nuevoCliente.rif_cedula) return alert("Nombre y RIF son obligatorios");
+    try {
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/clientes`, {
+        method: 'POST', headers: { ...SUPABASE_HEADERS, "Prefer": "return=representation" },
+        body: JSON.stringify({ ...nuevoCliente, nombre_razon: nuevoCliente.nombre_razon.toUpperCase(), rif_cedula: nuevoCliente.rif_cedula.toUpperCase() })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setClientesBD([...clientesBD, data[0]]); setMovimiento({ ...movimiento, persona: data[0].nombre_razon }); setModalClienteOpen(false);
+      }
+    } catch (e) {}
+  };
+
+  const formatearEnVivo = (valor: string, decimales: number) => {
+    if (!valor) return '';
+    let limpio = valor.replace(/[^0-9.,]/g, '').replace(/\./g, '');
+    if (limpio.includes(',')) {
+      const partes = limpio.split(',');
+      return partes[0].replace(/\B(?=(\d{3})+(?!\d))/g, '.') + ',' + partes[1].substring(0, decimales);
+    }
+    return limpio.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  };
+
+  const parsearNumeroBD = (valor: string) => parseFloat(valor.replace(/\./g, '').replace(',', '.')) || 0;
+  function aplicarFormatoEstricto(valor: string, decimales: number) {
+    if (!valor) return '';
+    return (parseFloat(valor.replace(/\./g, '').replace(',', '.')) || 0).toLocaleString('de-DE', { minimumFractionDigits: decimales, maximumFractionDigits: decimales });
+  }
+
+  const montoNumVivo = parsearNumeroBD(movimiento.monto);
+  const tasaNumVivo = parsearNumeroBD(movimiento.tasa) || 1;
+  const valorEqVivo = movimiento.moneda === 'Bs' ? (montoNumVivo / tasaNumVivo) : (montoNumVivo * tasaNumVivo);
+  const monedaEqViva = movimiento.moneda === 'Bs' ? 'USD' : 'Bs';
+  const valorCalculado = valorEqVivo.toLocaleString('de-DE', { minimumFractionDigits: 2 }) + " " + monedaEqViva;
+
+  const guardarMovimiento = async () => {
+    if (isSaving) return;
+    const montoNum = parsearNumeroBD(movimiento.monto);
+    const tasaNum = parsearNumeroBD(movimiento.tasa) || 1;
+    const valorEquivalente = movimiento.moneda === 'Bs' ? (montoNum / tasaNum) : (montoNum * tasaNum);
+    const monedaEquivalente = movimiento.moneda === 'Bs' ? 'USD' : 'Bs';
+    const valorCalculadoFinal = valorEquivalente.toLocaleString('de-DE', { minimumFractionDigits: 2 }) + " " + monedaEquivalente;
+    const esTransferencia = movimiento.tipo === 'Transferencia Interna';
+    
+    if (!movimiento.caja_id || montoNum <= 0) return alert("⚠️ Faltan datos obligatorios");
+    if (!esTransferencia && !movimiento.persona) return alert("⚠️ Indique el Beneficiario o Pagador");
+    if (esTransferencia && !movimiento.caja_destino_id) return alert("⚠️ Seleccione la cuenta destino");
+
+    setIsSaving(true);
+    const clasifNorm = movimiento.clasificacion.toUpperCase();
+
+    let estatusFact = 'No Aplica'; 
+    if (clasifNorm.includes('BOLETO') || clasifNorm.includes('HOSPEDAJE') || clasifNorm.includes('SERVICIO') || clasifNorm.includes('PAQUETE') || clasifNorm.includes('SEGURO')) {
+      estatusFact = 'Pendiente'; 
+    }
+
+    let estatusConciliacion = 'No Aplica';
+    if (clasifNorm === 'COBRANZA' && movimiento.tipo === 'Recibo de Ingreso') {
+      estatusConciliacion = 'Pendiente';
+    }
+
+    try {
+      let datosTicket = null;
+
+      if (esTransferencia) {
+        const cajaOrigen = cajasBD.find(c => c.id.toString() === movimiento.caja_id);
+        const cajaDestino = cajasBD.find(c => c.id.toString() === movimiento.caja_destino_id);
+        const nroReciboIngreso = (parseInt(nroRecibo, 10) + 1).toString().padStart(5, '0');
+        
+        const payloadEgreso = { nro_recibo: nroRecibo, fecha: movimiento.fecha, caja_id: movimiento.caja_id, referencia: movimiento.referencia || 'TRF-INT', persona: `TRASPASO A: ${cajaDestino.nombre}`, monto: montoNum, moneda: movimiento.moneda, tasa: tasaNum, tipo: 'Recibo de Egreso', clasificacion: 'TRF INTERNA', descripcion: movimiento.descripcion || 'Movimiento entre cuentas', estado_conciliacion: 'No Aplica' };
+        const payloadIngreso = { ...payloadEgreso, nro_recibo: nroReciboIngreso, caja_id: movimiento.caja_destino_id, persona: `TRASPASO DESDE: ${cajaOrigen.nombre}`, tipo: 'Recibo de Ingreso' };
+
+        const res1 = await fetch(`${SUPABASE_URL}/rest/v1/movimientos`, { method: 'POST', headers: SUPABASE_HEADERS, body: JSON.stringify(payloadEgreso) });
+        const res2 = await fetch(`${SUPABASE_URL}/rest/v1/movimientos`, { method: 'POST', headers: SUPABASE_HEADERS, body: JSON.stringify(payloadIngreso) });
+        
+        if (!res1.ok || !res2.ok) throw new Error("La base de datos rechazó la transferencia.");
+        
+        datosTicket = { ...payloadEgreso, tipo: 'TRANSFERENCIA INTERNA', nombre_caja: `${cajaOrigen.nombre} ➔ ${cajaDestino.nombre}`, valor_calculado: valorCalculadoFinal };
+      } else {
+        const payload = { 
+          nro_recibo: nroRecibo, fecha: movimiento.fecha, caja_id: movimiento.caja_id, referencia: movimiento.referencia || 'S/R', 
+          persona: movimiento.persona.toUpperCase(), monto: montoNum, moneda: movimiento.moneda, tasa: tasaNum, 
+          tipo: movimiento.tipo, clasificacion: movimiento.clasificacion, descripcion: movimiento.descripcion, 
+          estatus_facturacion: estatusFact,
+          estado_conciliacion: estatusConciliacion 
+        };
+        
+        const res = await fetch(`${SUPABASE_URL}/rest/v1/movimientos`, { method: 'POST', headers: SUPABASE_HEADERS, body: JSON.stringify(payload) });
+        
+        if (!res.ok) {
+           const errorDB = await res.json();
+           throw new Error(`Supabase rechazó el movimiento: ${errorDB.message || 'Error de esquema'}.`);
+        }
+        
+        datosTicket = { ...payload, nombre_caja: cajasBD.find(c => c.id.toString() === movimiento.caja_id)?.nombre, valor_calculado: valorCalculadoFinal };
+
+        if (clasifNorm.includes('PRESTAMO') || clasifNorm.includes('PRÉSTAMO')) {
+          if (movimiento.tipo === 'Recibo de Ingreso') {
+            await fetch(`${SUPABASE_URL}/rest/v1/cuentas_por_pagar`, {
+              method: 'POST', headers: SUPABASE_HEADERS, body: JSON.stringify({
+                categoria: 'Préstamos Recibidos', proveedor: movimiento.persona.toUpperCase(), nro_documento: movimiento.referencia || `REC-${nroRecibo}`,
+                concepto: `Auto-Generado: ${movimiento.descripcion || 'Préstamo recibido'}`, monto_total: montoNum, saldo_pendiente: montoNum,
+                moneda: movimiento.moneda, fecha_emision: movimiento.fecha, fecha_vencimiento: movimiento.fecha, estatus: 'Pendiente'
+              })
+            });
+          } else if (movimiento.tipo === 'Recibo de Egreso') {
+            await fetch(`${SUPABASE_URL}/rest/v1/cuentas_por_cobrar`, {
+              method: 'POST', headers: SUPABASE_HEADERS, body: JSON.stringify({
+                categoria: 'Préstamos Otorgados', cliente: movimiento.persona.toUpperCase(), nro_documento: movimiento.referencia || `REC-${nroRecibo}`,
+                concepto: `Auto-Generado: ${movimiento.descripcion || 'Préstamo otorgado'}`, monto_total: montoNum, saldo_pendiente: montoNum,
+                moneda: movimiento.moneda, fecha_emision: movimiento.fecha, fecha_vencimiento: movimiento.fecha, estatus: 'Pendiente'
+              })
+            });
+          }
+        }
+
+        if (clasifNorm.includes('MOVIMIENTO SOCIO') || clasifNorm.includes('PROVISION') || clasifNorm.includes('PROVISIÓN')) {
+          const tipoCompensacion = movimiento.tipo === 'Recibo de Egreso' ? 'Por Cobrar' : 'Por Pagar';
+          await fetch(`${SUPABASE_URL}/rest/v1/cuentas_socios`, {
+            method: 'POST', headers: SUPABASE_HEADERS, body: JSON.stringify({
+              socio: movimiento.persona.toUpperCase(), tipo: tipoCompensacion, nro_documento: movimiento.referencia || `REC-${nroRecibo}`,
+              concepto: `Auto-Generado: Cambio/Traspaso - ${movimiento.descripcion || 'Mover fondos'}`, monto_total: montoNum,
+              saldo_pendiente: montoNum, moneda: movimiento.moneda, tasa: tasaNum, equivalente: valorEquivalente,
+              moneda_equivalente: monedaEquivalente, fecha_emision: movimiento.fecha, estatus: 'Pendiente'
+            })
+          });
+        }
+      }
+
+      setTicketImpresion(datosTicket); 
+      setMovimiento({ ...movimiento, persona: '', monto: '', descripcion: '', referencia: '', clasificacion: '', caja_destino_id: '' });
+      obtenerUltimoRecibo(); 
+      
+      setTimeout(() => { 
+        window.print(); 
+        setTicketImpresion(null); 
+        setIsSaving(false); 
+      }, 800);
+      
+    } catch (e: any) { 
+      alert("❌ " + e.message);
+      setIsSaving(false); 
+    }
+  };
+
+  const esTransferencia = movimiento.tipo === 'Transferencia Interna';
+  const filtroTexto = movimiento.persona.toLowerCase();
+  const directorioUniversal = [
+    ...clientesBD.map(c => ({ id: `C-${c.id}`, tipo: 'CLIENTE', razonLegal: c.nombre_razon, nombreComercial: '', rif: c.rif_cedula, colorTipo: 'bg-emerald-500/20 text-emerald-400' })),
+    ...proveedoresBD.map(p => ({ id: `P-${p.id}`, tipo: 'PROVEEDOR', razonLegal: p.razon_social, nombreComercial: p.nombre_comercial || '', rif: p.rif, colorTipo: 'bg-amber-500/20 text-amber-400' }))
+  ];
+  const personasFiltradas = directorioUniversal.filter(item => item.razonLegal?.toLowerCase().includes(filtroTexto) || item.nombreComercial?.toLowerCase().includes(filtroTexto) || item.rif?.toLowerCase().includes(filtroTexto));
+
+  return (
+    <>
+      <style>{`
+        @media print {
+          body * { visibility: hidden !important; }
+          #seccion-recibo-imprimir, #seccion-recibo-imprimir * { visibility: visible !important; color: black !important; }
+          #seccion-recibo-imprimir { position: fixed !important; left: 0 !important; top: 0 !important; width: 100vw !important; height: 100vh !important; margin: 0 !important; padding: 20mm !important; background-color: white !important; z-index: 999999 !important; border: none !important; }
+          #seccion-recibo-imprimir .border-gray-200 { border-color: #e5e7eb !important; border-style: solid !important; border-width: 1px !important;}
+          #seccion-recibo-imprimir .border-gray-100 { border-color: #f3f4f6 !important; border-style: solid !important; border-width: 1px !important;}
+          #seccion-recibo-imprimir .border-black { border-color: black !important; border-style: solid !important;}
+          #seccion-recibo-imprimir .border-b-2 { border-bottom-width: 2px !important;}
+          #seccion-recibo-imprimir .border-t-2 { border-top-width: 2px !important;}
+          #seccion-recibo-imprimir .border-b { border-bottom-width: 1px !important;}
+          #seccion-recibo-imprimir .border-t { border-top-width: 1px !important;}
+        }
+      `}</style>
+      
+      <div className="animate-in fade-in duration-300 max-w-6xl mx-auto px-4 space-y-8 pb-10 print:hidden mt-6">
+        <div className="flex items-center gap-3 mb-8 border-b border-[#334155] pb-4">
+          <span className="text-3xl">💸</span>
+          <div><h2 className="text-2xl font-bold text-white uppercase tracking-tight">Registro de Movimiento</h2><p className="text-[#38bdf8] text-xs font-bold tracking-widest uppercase">Admin. y Finanzas</p></div>
+        </div>
+        
+        <div className="bg-[#1e293b] p-8 rounded-2xl border border-[#334155] shadow-xl relative">
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 border-b border-[#334155] pb-4 gap-4">
+            <div className="flex flex-wrap gap-3">
+              <button onClick={() => setMovimiento({...movimiento, tipo: 'Recibo de Ingreso', caja_destino_id: ''})} className={`px-4 py-2 rounded-lg font-bold text-xs uppercase transition-all ${movimiento.tipo === 'Recibo de Ingreso' ? 'bg-emerald-500 text-white shadow-[0_0_15px_rgba(16,185,129,0.4)]' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}>📥 Ingreso</button>
+              <button onClick={() => setMovimiento({...movimiento, tipo: 'Recibo de Egreso', caja_destino_id: ''})} className={`px-4 py-2 rounded-lg font-bold text-xs uppercase transition-all ${movimiento.tipo === 'Recibo de Egreso' ? 'bg-rose-500 text-white shadow-[0_0_15px_rgba(244,63,94,0.4)]' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}>📤 Egreso</button>
+              <button onClick={() => setMovimiento({...movimiento, tipo: 'Transferencia Interna', persona: ''})} className={`px-4 py-2 rounded-lg font-bold text-xs uppercase transition-all ${movimiento.tipo === 'Transferencia Interna' ? 'bg-blue-500 text-white shadow-[0_0_15px_rgba(59,130,246,0.4)]' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}>🔄 Transferencia</button>
+            </div>
+            {saldoActual !== null && (
+              <div className="text-right bg-black/20 px-4 py-2 rounded-lg border border-[#334155]">
+                <p className="text-[10px] text-slate-400 font-bold uppercase mb-1">Saldo Disponible</p>
+                <p className="text-xl font-bold font-mono text-emerald-400">{saldoActual.toLocaleString('de-DE', { minimumFractionDigits: 2 })} {movimiento.moneda}</p>
+              </div>
+            )}
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+            
+            <div>
+              <label className="block text-[11px] font-bold text-slate-400 mb-2 uppercase">{esTransferencia ? '1. Caja Origen (Sale)' : '1. Caja o Banco'}</label>
+              <div className="relative">
+                <select className="w-full h-[46px] px-4 bg-black/40 border border-[#334155] rounded-lg text-white font-bold appearance-none cursor-pointer outline-none focus:border-[#38bdf8] transition-colors" value={movimiento.caja_id} onChange={(e) => setMovimiento({...movimiento, caja_id: e.target.value, moneda: cajasBD.find(c=>c.id.toString()===e.target.value)?.moneda})}>
+                  <option value="" className="bg-[#0f172a]">-- Seleccione --</option>
+                  {cajasBD.map(c => <option key={c.id} value={c.id} className="bg-[#0f172a]">{c.nombre} ({c.moneda})</option>)}
+                </select>
+                <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400 text-xs">▼</div>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-bold text-slate-400 mb-2 uppercase tracking-widest">Fecha</label>
+              <input type="date" className="w-full h-[46px] px-4 bg-black/40 border border-[#334155] rounded-lg text-white font-bold [color-scheme:dark] cursor-pointer hover:border-[#38bdf8] outline-none transition-colors" value={movimiento.fecha} onChange={(e) => setMovimiento({...movimiento, fecha: e.target.value})} onClick={(e: any) => e.target.showPicker()} />
+            </div>
+          </div>
+          
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+            <div className="md:col-span-2">
+              {esTransferencia ? (
+                <>
+                  <label className="block text-[11px] font-bold text-emerald-400 mb-2 uppercase">2. Cuenta Destino (Entra)</label>
+                  <div className="relative">
+                    <select className="w-full h-[46px] px-4 bg-black/40 border border-emerald-500/30 rounded-lg text-white font-bold appearance-none cursor-pointer outline-none focus:border-emerald-500 transition-colors" value={movimiento.caja_destino_id} onChange={(e) => setMovimiento({...movimiento, caja_destino_id: e.target.value})}>
+                      <option value="" className="bg-[#0f172a]">-- Seleccione Destino --</option>
+                      {cajasBD.filter(c => c.id.toString() !== movimiento.caja_id).map(c => <option key={c.id} value={c.id} className="bg-[#0f172a]">{c.nombre}</option>)}
+                    </select>
+                    <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-emerald-500/50 text-xs">▼</div>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="flex justify-between items-center mb-2">
+                    <label className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">Beneficiario / Pagador</label>
+                    <div className="flex gap-4">
+                      <button onClick={() => setModalClienteOpen(true)} className="text-[10px] text-emerald-400 font-bold hover:text-white transition-colors">+ NUEVO CLIENTE</button>
+                      <button onClick={() => setModalProvOpen(true)} className="text-[10px] text-amber-400 font-bold hover:text-white transition-colors">+ NUEVO PROVEEDOR</button>
+                    </div>
+                  </div>
+                  <div className="relative">
+                    <input type="text" className="w-full h-[46px] px-4 bg-black/40 border border-[#334155] rounded-lg text-white font-bold uppercase focus:border-[#38bdf8] outline-none transition-colors" value={movimiento.persona} onChange={(e) => { setMovimiento({...movimiento, persona: e.target.value}); setMostrarBuscador(true); }} onFocus={() => setMostrarBuscador(true)} onBlur={() => setTimeout(() => setMostrarBuscador(false), 200)} placeholder="BUSCAR O ESCRIBIR NOMBRE..." />
+                    <span className="absolute right-4 top-4 text-xs text-slate-400 pointer-events-none">▼</span>
+                    {mostrarBuscador && personasFiltradas.length > 0 && (
+                      <ul className="absolute z-50 w-full bg-[#1e293b] border border-[#334155] max-h-60 overflow-y-auto rounded-lg mt-1 shadow-2xl custom-scrollbar">
+                        {personasFiltradas.map((item) => (
+                          <li key={item.id} onMouseDown={(e) => e.preventDefault()} onClick={() => { setMovimiento({...movimiento, persona: item.razonLegal}); setMostrarBuscador(false); }} className="px-4 py-3 hover:bg-[#334155] cursor-pointer border-b border-[#334155]/50 last:border-0 transition-colors">
+                            <div className="flex justify-between items-center mb-1">
+                              <span className="font-bold text-white text-xs uppercase">{item.nombreComercial ? `${item.nombreComercial} (${item.razonLegal})` : item.razonLegal}</span>
+                              <span className={`text-[9px] font-bold px-2 py-0.5 rounded ${item.colorTipo}`}>{item.tipo}</span>
+                            </div>
+                            <div className="text-[10px] text-slate-400 font-mono">RIF: {item.rif}</div>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+            <div>
+              <label className="block text-[11px] font-bold text-slate-400 mb-2 uppercase tracking-widest">Referencia</label>
+              <input type="text" className="w-full h-[46px] px-4 bg-black/40 border border-[#334155] rounded-lg text-white font-bold" value={movimiento.referencia} onChange={(e) => setMovimiento({...movimiento, referencia: e.target.value})} placeholder="NRO. OPERACIÓN" />
+            </div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6 bg-black/20 p-5 rounded-xl border border-[#334155]">
+            <div>
+              <label className="block text-[11px] font-bold text-[#38bdf8] mb-2 uppercase tracking-widest">Monto</label>
+              <input type="text" className="w-full h-[46px] px-4 bg-black/50 border border-[#38bdf8]/30 rounded-lg text-lg font-mono text-white" value={movimiento.monto} onChange={(e) => setMovimiento({...movimiento, monto: formatearEnVivo(e.target.value, 2)})} onBlur={() => setMovimiento({...movimiento, monto: aplicarFormatoEstricto(movimiento.monto, 2)})} />
+            </div>
+            <div>
+              <label className="block text-[11px] font-bold text-slate-400 mb-2 uppercase text-center">Tasa</label>
+              <input type="text" className="w-full h-[46px] px-4 bg-black/40 border border-[#334155] rounded-lg text-white font-mono text-center" value={movimiento.tasa} onChange={(e) => setMovimiento({...movimiento, tasa: formatearEnVivo(e.target.value, 3)})} onBlur={() => setMovimiento({...movimiento, tasa: aplicarFormatoEstricto(movimiento.tasa, 3)})} />
+            </div>
+            <div className="md:col-span-2">
+              <label className="block text-[11px] font-bold text-emerald-400 mb-2 uppercase tracking-widest">Equivalente</label>
+              <div className="h-[46px] flex items-center justify-center bg-emerald-500/10 border border-emerald-500/30 rounded-lg font-mono font-bold text-emerald-400 text-xl">{valorCalculado}</div>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+            
+            <div>
+              <div className="flex justify-between items-center mb-2">
+                <label className="block text-[11px] font-bold text-slate-400 uppercase">Clasificación</label>
+                <div className="text-[10px]"><button onClick={agregarClasificacion} disabled={esTransferencia} className="text-emerald-400 font-bold hover:text-white">+ Agregar</button></div>
+              </div>
+              <div className="relative">
+                <select className="w-full h-[46px] px-4 bg-black/40 border border-[#334155] rounded-lg text-white font-bold appearance-none cursor-pointer outline-none focus:border-[#38bdf8] transition-colors disabled:opacity-50" value={movimiento.clasificacion} onChange={(e) => setMovimiento({...movimiento, clasificacion: e.target.value})} disabled={esTransferencia}>
+                  <option value="" className="bg-[#0f172a]">-- Seleccione --</option>
+                  {clasificacionesBD.map(cl => <option key={cl.id} value={cl.nombre} className="bg-[#0f172a]">{cl.nombre}</option>)}
+                  {esTransferencia && <option value="TRF INTERNA" className="bg-[#0f172a]">TRF INTERNA</option>}
+                </select>
+                <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400 text-xs">▼</div>
+              </div>
+            </div>
+
+            <div className="md:col-span-2">
+              <label className="block text-[11px] font-bold text-slate-400 mb-2 uppercase">Concepto / Descripción</label>
+              <input type="text" className="w-full h-[46px] px-4 bg-black/40 border border-[#334155] rounded-lg text-white" value={movimiento.descripcion} onChange={(e) => setMovimiento({...movimiento, descripcion: e.target.value})} placeholder="DETALLES ADICIONALES..." />
+            </div>
+          </div>
+          <div className="flex justify-center border-t border-[#334155] pt-6">
+            <button onClick={guardarMovimiento} disabled={isSaving} className={`px-12 py-4 text-white font-black rounded-xl transition-all shadow-lg uppercase tracking-widest text-sm ${isSaving ? 'bg-slate-600' : 'bg-[#10b981] hover:bg-emerald-400'}`}>
+              {isSaving ? 'PROCESANDO E IMPRIMIENDO...' : 'REGISTRAR E IMPRIMIR MOVIMIENTO'}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* MODAL NUEVO PROVEEDOR ACTUALIZADO */}
+      {modalProvOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="bg-[#1e293b] w-full max-w-3xl rounded-2xl border border-[#334155] shadow-2xl p-8 animate-in zoom-in duration-200">
+            <h3 className="text-xl font-bold text-white mb-6 border-b border-[#334155] pb-4 uppercase tracking-tighter">Crear Nuevo Proveedor Rápido</h3>
+            
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+              
+              <div className="md:col-span-3 grid grid-cols-3 gap-4 bg-black/20 p-4 rounded-xl border border-[#334155] mb-2">
+                <div className="col-span-1">
+                  <label className="text-[10px] font-bold text-emerald-400 uppercase">Código Interno</label>
+                  <input type="text" className="w-full bg-emerald-500/10 border border-emerald-500/30 rounded-lg p-3 mt-1 text-emerald-400 font-mono font-bold" value={nuevoProv.codigo} onChange={(e)=>setNuevoProv({...nuevoProv, codigo: e.target.value})} placeholder="Auto-Generado" />
+                </div>
+                <div className="col-span-1">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase">RIF (Dato Fiscal)</label>
+                  <input type="text" className="w-full bg-black/40 border border-[#334155] rounded-lg p-3 mt-1 text-white font-mono uppercase placeholder:text-slate-600" value={nuevoProv.rif} onChange={manejarCambioRifNuevoProv} placeholder="Ej: J-12345678-9" />
+                </div>
+                <div className="col-span-1">
+                  <label className="text-[10px] font-bold text-[#38bdf8] uppercase">Categoría / Tipo</label>
+                  <div className="relative">
+                    <select 
+                      className="w-full bg-[#0f172a] border border-[#38bdf8]/50 rounded-lg p-3 mt-1 text-white font-bold uppercase outline-none focus:border-[#38bdf8] appearance-none" 
+                      value={nuevoProv.tipo} 
+                      onChange={(e)=>setNuevoProv({...nuevoProv, tipo: e.target.value})}
+                    >
+                      <option value="HOTEL">🏨 HOTEL</option>
+                      <option value="POSADA">🏡 POSADA</option>
+                      <option value="AEROLINEA">✈️ AEROLÍNEA</option>
+                      <option value="COMPAÑIA DE SEGURO">🛡️ COMPAÑÍA DE SEGUROS</option>
+                      <option value="AGENCIA DE TRASLADO">🚕 AGENCIA TRASLADOS</option>
+                      <option value="MAYORISTA">🌍 MAYORISTA / OPERADOR</option>
+                      <option value="PROVEEDOR GENERAL">📦 PROVEEDOR GENERAL (OFICINA, OTROS)</option>
+                    </select>
+                    <div className="absolute right-3 top-1/2 pointer-events-none text-[#38bdf8] text-[10px]">▼</div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="md:col-span-3">
+                <label className="text-[10px] font-bold text-amber-400 uppercase">Nombre Comercial (Conocido como)</label>
+                <input type="text" placeholder="Ej: Hotel Posada del Mar" className="w-full bg-black/40 border border-[#334155] rounded-lg p-3 mt-1 text-white uppercase font-bold text-lg" value={nuevoProv.nombre_comercial || ''} onChange={(e)=>setNuevoProv({...nuevoProv, nombre_comercial: e.target.value})} />
+              </div>
+              
+              <div className="md:col-span-3">
+                <label className="text-[10px] font-bold text-slate-400 uppercase">Razón Social (Legal / SENIAT)</label>
+                <input type="text" placeholder="Ej: INVERSIONES MAR AZUL C.A." className="w-full bg-black/40 border border-[#334155] rounded-lg p-3 mt-1 text-white uppercase font-bold" value={nuevoProv.razon_social} onChange={(e)=>setNuevoProv({...nuevoProv, razon_social: e.target.value})} />
+              </div>
+
+              <div className="md:col-span-1">
+                <label className="text-[10px] font-bold text-slate-400 uppercase">País</label>
+                <input type="text" placeholder="Ej: VENEZUELA" className="w-full bg-black/40 border border-[#334155] rounded-lg p-3 mt-1 text-white uppercase" value={nuevoProv.pais} onChange={(e)=>setNuevoProv({...nuevoProv, pais: e.target.value})} />
+              </div>
+              <div className="md:col-span-2">
+                <label className="text-[10px] font-bold text-slate-400 uppercase">Ciudad (Súper importante para los Hoteles)</label>
+                <input type="text" placeholder="Ej: ISLA DE MARGARITA" className="w-full bg-black/40 border border-[#334155] rounded-lg p-3 mt-1 text-white uppercase" value={nuevoProv.ciudad} onChange={(e)=>setNuevoProv({...nuevoProv, ciudad: e.target.value})} />
+              </div>
+
+              <div className="md:col-span-1">
+                <label className="text-[10px] font-bold text-slate-400 uppercase">Teléfono</label>
+                <input type="text" className="w-full bg-black/40 border border-[#334155] rounded-lg p-3 mt-1 text-white font-mono" value={nuevoProv.telefono} onChange={(e)=>setNuevoProv({...nuevoProv, telefono: e.target.value})} />
+              </div>
+              <div className="md:col-span-2">
+                <label className="text-[10px] font-bold text-slate-400 uppercase">Correo Electrónico</label>
+                <input type="email" className="w-full bg-black/40 border border-[#334155] rounded-lg p-3 mt-1 text-white" value={nuevoProv.correo} onChange={(e)=>setNuevoProv({...nuevoProv, correo: e.target.value})} />
+              </div>
+              <div className="md:col-span-3">
+                <label className="text-[10px] font-bold text-slate-400 uppercase">Dirección Física Exacta</label>
+                <input type="text" className="w-full bg-black/40 border border-[#334155] rounded-lg p-3 mt-1 text-white" value={nuevoProv.direccion} onChange={(e)=>setNuevoProv({...nuevoProv, direccion: e.target.value})} />
+              </div>
+
+            </div>
+            
+            <div className="flex justify-end gap-4 pt-4 border-t border-[#334155]">
+              <button onClick={()=>setModalProvOpen(false)} className="text-slate-400 font-bold hover:text-white transition-colors">CANCELAR</button>
+              <button onClick={crearProveedor} className="bg-[#10b981] text-white px-8 py-2 rounded-lg font-bold hover:bg-emerald-400 transition-colors uppercase text-xs shadow-[0_0_15px_rgba(16,185,129,0.2)]">
+                GUARDAR Y SELECCIONAR
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL NUEVO CLIENTE (Sin cambios) */}
+      {modalClienteOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="bg-[#1e293b] w-full max-w-xl rounded-2xl border border-[#334155] shadow-2xl p-8 animate-in zoom-in duration-200">
+            <h3 className="text-lg font-bold text-emerald-400 mb-4 uppercase">Rápido: Nuevo Cliente</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="md:col-span-2"><input type="text" placeholder="Nombre o Razón Social *" className="w-full bg-black/40 border border-[#334155] rounded-lg p-3 text-white" value={nuevoCliente.nombre_razon} onChange={(e)=>setNuevoCliente({...nuevoCliente, nombre_razon: e.target.value})} /></div>
+              <div><input type="text" placeholder="RIF / Cédula *" className="w-full bg-black/40 border border-[#334155] rounded-lg p-3 text-white" value={nuevoCliente.rif_cedula} onChange={(e)=>setNuevoCliente({...nuevoCliente, rif_cedula: e.target.value})} /></div>
+              <div><input type="text" placeholder="Teléfono" className="w-full bg-black/40 border border-[#334155] rounded-lg p-3 text-white" value={nuevoCliente.telefono} onChange={(e)=>setNuevoCliente({...nuevoCliente, telefono: e.target.value})} /></div>
+            </div>
+            <div className="flex justify-end gap-4 mt-6">
+              <button onClick={()=>setModalClienteOpen(false)} className="text-slate-400 font-bold hover:text-white">CANCELAR</button>
+              <button onClick={crearCliente} className="bg-emerald-500 text-white px-6 py-2 rounded-lg font-bold hover:bg-emerald-400">GUARDAR</button>
+            </div>
+          </div>
+        </div>
+      )}
+      
+      {/* EL RECIBO DE IMPRESIÓN */}
+      {ticketImpresion && (
+        <div id="seccion-recibo-imprimir" className="hidden print:block font-sans">
+          <div className="flex justify-between items-center border-b-2 border-black pb-3 mb-5">
+            <div>
+              <h1 className="text-xl print:text-base font-black italic m-0 p-0 text-black">PRINCESS TRAVEL</h1>
+              <p className="text-[8px] font-bold tracking-[0.2em] uppercase m-0 p-0 text-black">Management & Tourism</p>
+            </div>
+            <div className="text-right">
+              <h2 className="text-lg print:text-sm font-black uppercase border border-black px-3 py-1 rounded inline-block m-0 text-black">{ticketImpresion.tipo}</h2>
+              <p className="text-base print:text-xs font-mono mt-1 text-black">Nº {ticketImpresion.nro_recibo}</p>
+            </div>
+          </div>
+          <div className="space-y-4 text-sm print:text-xs mb-8">
+            <div className="grid grid-cols-2 bg-gray-50 p-3 rounded-lg border border-gray-100">
+              <p className="text-black m-0"><span className="text-[9px] font-bold text-gray-500 block uppercase mb-0.5">Fecha</span> {ticketImpresion.fecha}</p>
+              <p className="text-right text-black m-0"><span className="text-[9px] font-bold text-gray-500 block uppercase mb-0.5">Cuenta/Caja</span> {ticketImpresion.nombre_caja}</p>
+            </div>
+            <div>
+              <p className="text-[9px] font-bold text-gray-500 uppercase mb-0.5 m-0">Beneficiario / Pagador</p>
+              <p className="text-xl print:text-sm font-black uppercase border-b border-gray-200 pb-1 m-0 text-black">{ticketImpresion.persona}</p>
+            </div>
+            <div>
+              <p className="text-[9px] font-bold text-gray-500 uppercase mb-0.5 m-0">Monto Total</p>
+              <p className="text-3xl print:text-2xl font-black text-black m-0">
+                {ticketImpresion.monto.toLocaleString('de-DE', { minimumFractionDigits: 2 })} {ticketImpresion.moneda}
+              </p>
+              <p className="text-[10px] text-gray-600 mt-1 font-mono italic bg-gray-50 px-2 py-1 inline-block rounded m-0">
+                Equivalente: {ticketImpresion.valor_calculado} (Tasa: {ticketImpresion.tasa})
+              </p>
+            </div>
+            <div className="border border-gray-200 rounded-lg p-3 bg-white">
+              <p className="text-[9px] font-bold text-gray-500 uppercase mb-1 m-0">Concepto / Descripción</p>
+              <p className="text-base print:text-xs font-medium leading-relaxed text-black m-0">{ticketImpresion.descripcion || 'Sin descripción detallada.'}</p>
+              <p className="text-[10px] text-gray-500 mt-2 m-0">Ref: {ticketImpresion.referencia}</p>
+            </div>
+          </div>
+          <div className="flex justify-between mt-24 px-8 pt-6 border-t border-gray-100">
+            <div className="w-56 border-t-2 border-black pt-1.5 text-center text-[10px] font-bold uppercase text-black">Administración Princess Travel</div>
+            <div className="w-56 border-t-2 border-black pt-1.5 text-center text-[10px] font-bold uppercase text-black">Firma Recibido / Conforme</div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
