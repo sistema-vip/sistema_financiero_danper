@@ -18,6 +18,7 @@ export default function CuentasPorPagarPage() {
     categoria: 'Proveedores', proveedor: '', nro_documento: '', concepto: '', monto_total: '', moneda: 'USD', fecha_emision: '', fecha_vencimiento: ''
   });
   const [abono, setAbono] = useState('');
+  const [refAbono, setRefAbono] = useState('');
 
   useEffect(() => {
     cargarDatos();
@@ -86,11 +87,18 @@ export default function CuentasPorPagarPage() {
     let nuevoEstatus = 'Parcial';
     if (nuevoSaldo === 0) nuevoEstatus = 'Pagado';
 
+    let docActualizado = registroSeleccionado.nro_documento;
+    if (refAbono.trim() !== '') {
+      const r = refAbono.trim().toUpperCase();
+      docActualizado = (!docActualizado || docActualizado === 'S/N' || docActualizado === 'S/R') ? `PAGO: ${r}` : `${docActualizado} | PAGO: ${r}`;
+    }
+
     try {
       const res = await fetch(`${SUPABASE_URL}/rest/v1/cuentas_por_pagar?id=eq.${registroSeleccionado.id}`, {
         method: 'PATCH', headers: SUPABASE_HEADERS, body: JSON.stringify({
           saldo_pendiente: nuevoSaldo,
-          estatus: nuevoEstatus
+          estatus: nuevoEstatus,
+          nro_documento: docActualizado
         })
       });
 
@@ -98,6 +106,7 @@ export default function CuentasPorPagarPage() {
         alert(`✅ Pago registrado. Saldo restante a pagar: ${formatearMonto(nuevoSaldo)}`);
         setModalAbonoOpen(false);
         setAbono('');
+        setRefAbono('');
         cargarDatos();
       } else alert("❌ Error al registrar pago.");
     } catch (e) { alert("Error de conexión"); }
@@ -309,13 +318,18 @@ export default function CuentasPorPagarPage() {
               <p className="text-3xl font-black font-mono text-rose-400">{formatearMonto(registroSeleccionado.saldo_pendiente)} {registroSeleccionado.moneda}</p>
             </div>
 
-            <div className="mb-6">
+            <div className="mb-4">
               <label className="text-[10px] font-bold text-emerald-400 uppercase">Monto a Pagar ({registroSeleccionado.moneda})</label>
               <input type="text" className="w-full bg-black/40 border border-emerald-500/30 focus:border-emerald-500 rounded-lg p-4 mt-1 text-white font-mono text-xl text-center outline-none" value={abono} onChange={(e)=>setAbono(e.target.value)} placeholder="0,00" autoFocus />
             </div>
 
+            <div className="mb-6">
+              <label className="text-[10px] font-bold text-slate-300 uppercase">Referencia / Cómo se pagó</label>
+              <input type="text" className="w-full bg-black/40 border border-[#334155] focus:border-emerald-500 rounded-lg p-3 mt-1 text-white font-mono text-sm text-center outline-none uppercase placeholder:text-slate-600 transition-colors" placeholder="EJ: TRANSF-BANESCO, ZELLE-9988..." value={refAbono} onChange={(e)=>setRefAbono(e.target.value)} />
+            </div>
+
             <div className="flex justify-end gap-4 border-t border-[#334155] pt-4">
-              <button onClick={()=>{setModalAbonoOpen(false); setAbono('');}} className="text-slate-400 font-bold hover:text-white transition-colors">CANCELAR</button>
+              <button onClick={()=>{setModalAbonoOpen(false); setAbono(''); setRefAbono('');}} className="text-slate-400 font-bold hover:text-white transition-colors">CANCELAR</button>
               <button onClick={procesarAbono} className="bg-emerald-500 hover:bg-emerald-400 text-white px-6 py-2 rounded-lg font-black uppercase text-xs shadow-[0_0_15px_rgba(16,185,129,0.3)] transition-colors">APLICAR PAGO</button>
             </div>
           </div>

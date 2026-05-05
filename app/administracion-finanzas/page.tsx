@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { SUPABASE_URL, SUPABASE_HEADERS } from '@/app/config';
 
 export default function AdminFinanzasPage() {
@@ -12,6 +12,8 @@ export default function AdminFinanzasPage() {
   const [ticketImpresion, setTicketImpresion] = useState<any>(null);
   const [saldoActual, setSaldoActual] = useState<number | null>(null);
   const [mostrarBuscador, setMostrarBuscador] = useState(false);
+  const [isProcessingCapture, setIsProcessingCapture] = useState(false);
+  const captureInputRef = useRef<HTMLInputElement>(null);
 
   // Modales
   const [modalProvOpen, setModalProvOpen] = useState(false);
@@ -22,6 +24,15 @@ export default function AdminFinanzasPage() {
   
   const [modalClienteOpen, setModalClienteOpen] = useState(false);
   const [nuevoCliente, setNuevoCliente] = useState({ nombre_razon: '', rif_cedula: '', telefono: '', email: '' });
+
+  // Modal cruzar movimiento
+  const [dropdownCruzarOpen, setDropdownCruzarOpen] = useState(false);
+  const [modalCruzarOpen, setModalCruzarOpen] = useState(false);
+  const [tipoCruce, setTipoCruce] = useState<'cxc'|'cxp'|'socio-cobrar'|'socio-pagar'>('cxc');
+  const [pendientesCruce, setPendientesCruce] = useState<any[]>([]);
+  const [itemCruceTarget, setItemCruceTarget] = useState<any>(null);
+  const [loadingCruce, setLoadingCruce] = useState(false);
+  const [busquedaCruce, setBusquedaCruce] = useState('');
 
   // Estado principal
   const [movimiento, setMovimiento] = useState({
@@ -274,6 +285,90 @@ export default function AdminFinanzasPage() {
     }
   };
 
+  const handleCapture = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsProcessingCapture(true);
+    try {
+      const buffer = await file.arrayBuffer();
+      const bytes = new Uint8Array(buffer);
+      // Convertir en chunks para evitar stack overflow en imágenes grandes
+      let base64 = '';
+      const chunkSize = 8192;
+      for (let i = 0; i < bytes.length; i += chunkSize) {
+        base64 += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+      }
+      base64 = btoa(base64);
+
+      const res = await fetch('/api/leer-recibo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ imageBase64: base64, mimeType: file.type }),
+      });
+      const datos = await res.json();
+      console.log('Respuesta del backend:', datos);
+      if (!res.ok) {
+        const detalle = datos.urlIntentada ? `\nURL: ${datos.urlIntentada}` : '';
+        throw new Error((datos.error || `Error HTTP ${res.status}`) + detalle);
+      }
+      // Fallback: si no hay descripcion explícita pero sí banco, usar banco como descripción
+      const descripcionFinal = datos.descripcion ?? (datos.banco ? `Transferencia desde ${datos.banco}` : null);
+      setMovimiento(prev => ({
+        ...prev,
+        ...(datos.monto != null ? { monto: Number(datos.monto).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) } : {}),
+        ...(datos.referencia ? { referencia: datos.referencia } : {}),
+        ...(datos.fecha ? { fecha: datos.fecha } : {}),
+        ...(datos.beneficiario ? { persona: String(datos.beneficiario).toUpperCase() } : {}),
+        ...(descripcionFinal ? { descripcion: descripcionFinal } : {}),
+      }));
+    } catch (err: any) {
+      console.error('Error handleCapture:', err);
+      alert('❌ Error al procesar el capture:\n' + (err.message ?? 'Error desconocido'));
+    } finally {
+      setIsProcessingCapture(false);
+      if (captureInputRef.current) captureInputRef.current.value = '';
+    }
+  };
+
+  const fmtLiq = (n: number) => n.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  const abrirCruzar = async (tipo: 'cxc'|'cxp'|'socio-cobrar'|'socio-pagar') => {
+    setModalCruzarOpen(true);
+    setTipoCruce(tipo);
+    setItemCruceTarget(null);
+    setBusquedaCruce('');
+    setLoadingCruce(true);
+    const urls: Record<string, string> = {
+      'cxc': `${SUPABASE_URL}/rest/v1/cuentas_por_cobrar?estatus=neq.Pagado&order=fecha_vencimiento.asc`,
+      'cxp': `${SUPABASE_URL}/rest/v1/cuentas_por_pagar?estatus=neq.Pagado&order=fecha_vencimiento.asc`,
+      'socio-cobrar': `${SUPABASE_URL}/rest/v1/cuentas_socios?tipo=eq.Por%20Cobrar&estatus=neq.Compensado&order=fecha_emision.desc`,
+      'socio-pagar': `${SUPABASE_URL}/rest/v1/cuentas_socios?tipo=eq.Por%20Pagar&estatus=neq.Compensado&order=fecha_emision.desc`,
+    };
+    try {
+      const res = await fetch(urls[tipo], { headers: SUPABASE_HEADERS });
+      setPendientesCruce(res.ok ? await res.json() : []);
+    } catch { setPendientesCruce([]); }
+    setLoadingCruce(false);
+  };
+
+  const confirmarCruce = async () => {
+    if (!itemCruceTarget) return;
+    const esSocio = tipoCruce.startsWith('socio');
+    const tabla = esSocio ? 'cuentas_socios' : tipoCruce === 'cxc' ? 'cuentas_por_cobrar' : 'cuentas_por_pagar';
+    const nuevoEstatus = esSocio ? 'Compensado' : 'Pagado';
+    try {
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/${tabla}?id=eq.${itemCruceTarget.id}`, {
+        method: 'PATCH', headers: SUPABASE_HEADERS,
+        body: JSON.stringify({ saldo_pendiente: 0, estatus: nuevoEstatus })
+      });
+      if (res.ok) {
+        alert(`✅ Cruce aplicado. Registro marcado como ${nuevoEstatus}.`);
+        setModalCruzarOpen(false);
+        setItemCruceTarget(null);
+      } else alert('❌ Error al aplicar el cruce.');
+    } catch { alert('❌ Error de conexión.'); }
+  };
+
   const esTransferencia = movimiento.tipo === 'Transferencia Interna';
   const filtroTexto = movimiento.persona.toLowerCase();
   const directorioUniversal = [
@@ -311,6 +406,31 @@ export default function AdminFinanzasPage() {
               <button onClick={() => setMovimiento({...movimiento, tipo: 'Recibo de Ingreso', caja_destino_id: ''})} className={`px-4 py-2 rounded-lg font-bold text-xs uppercase transition-all ${movimiento.tipo === 'Recibo de Ingreso' ? 'bg-emerald-500 text-white shadow-[0_0_15px_rgba(16,185,129,0.4)]' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}>📥 Ingreso</button>
               <button onClick={() => setMovimiento({...movimiento, tipo: 'Recibo de Egreso', caja_destino_id: ''})} className={`px-4 py-2 rounded-lg font-bold text-xs uppercase transition-all ${movimiento.tipo === 'Recibo de Egreso' ? 'bg-rose-500 text-white shadow-[0_0_15px_rgba(244,63,94,0.4)]' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}>📤 Egreso</button>
               <button onClick={() => setMovimiento({...movimiento, tipo: 'Transferencia Interna', persona: ''})} className={`px-4 py-2 rounded-lg font-bold text-xs uppercase transition-all ${movimiento.tipo === 'Transferencia Interna' ? 'bg-blue-500 text-white shadow-[0_0_15px_rgba(59,130,246,0.4)]' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}>🔄 Transferencia</button>
+              <input ref={captureInputRef} type="file" accept="image/*" className="hidden" onChange={handleCapture} />
+              <button
+                onClick={() => captureInputRef.current?.click()}
+                disabled={isProcessingCapture}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-xs uppercase transition-all border ${isProcessingCapture ? 'bg-violet-900/40 border-violet-500/30 text-violet-300 cursor-not-allowed' : 'bg-violet-600/20 border-violet-500/40 text-violet-300 hover:bg-violet-600/40 hover:border-violet-400 shadow-[0_0_12px_rgba(139,92,246,0.2)]'}`}
+              >
+                {isProcessingCapture ? (
+                  <><span className="animate-spin inline-block">⏳</span> Procesando...</>
+                ) : (
+                  <>📸 Cargar Capture</>
+                )}
+              </button>
+              <div className="relative">
+                <button onClick={() => setDropdownCruzarOpen(v => !v)} className="flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-xs uppercase transition-all border border-purple-500/40 bg-purple-500/10 text-purple-300 hover:bg-purple-500/20 hover:border-purple-400">
+                  🔗 Cruzar con... {dropdownCruzarOpen ? '▲' : '▾'}
+                </button>
+                {dropdownCruzarOpen && (
+                  <div className="absolute z-50 left-0 top-full mt-1 flex flex-col bg-[#1e293b] border border-[#334155] rounded-xl shadow-2xl overflow-hidden w-52">
+                    <button onClick={() => { setDropdownCruzarOpen(false); abrirCruzar('cxc'); }} className="px-4 py-3 text-left text-xs font-bold text-[#38bdf8] hover:bg-[#38bdf8]/10 transition-colors">📥 Cuenta por Cobrar</button>
+                    <button onClick={() => { setDropdownCruzarOpen(false); abrirCruzar('cxp'); }} className="px-4 py-3 text-left text-xs font-bold text-rose-400 hover:bg-rose-500/10 transition-colors">📤 Cuenta por Pagar</button>
+                    <button onClick={() => { setDropdownCruzarOpen(false); abrirCruzar('socio-cobrar'); }} className="px-4 py-3 text-left text-xs font-bold text-emerald-400 hover:bg-emerald-500/10 transition-colors">🟢 Socio: Por Recibir</button>
+                    <button onClick={() => { setDropdownCruzarOpen(false); abrirCruzar('socio-pagar'); }} className="px-4 py-3 text-left text-xs font-bold text-amber-400 hover:bg-amber-500/10 transition-colors">🔴 Socio: Por Entregar</button>
+                  </div>
+                )}
+              </div>
             </div>
             {saldoActual !== null && (
               <div className="text-right bg-black/20 px-4 py-2 rounded-lg border border-[#334155]">
@@ -529,6 +649,89 @@ export default function AdminFinanzasPage() {
         </div>
       )}
       
+      {/* MODAL CRUZAR CON... */}
+      {modalCruzarOpen && (() => {
+        const labelTipo: Record<string, string> = {
+          'cxc': '📥 Cuentas por Cobrar',
+          'cxp': '📤 Cuentas por Pagar',
+          'socio-cobrar': '🟢 Socio — Por Recibir',
+          'socio-pagar': '🔴 Socio — Por Entregar',
+        };
+        const filtrados = pendientesCruce.filter(item => {
+          const nombre = (item.cliente || item.proveedor || item.socio || '').toLowerCase();
+          const concepto = (item.concepto || '').toLowerCase();
+          const ref = (item.nro_documento || '').toLowerCase();
+          return nombre.includes(busquedaCruce.toLowerCase()) || concepto.includes(busquedaCruce.toLowerCase()) || ref.includes(busquedaCruce.toLowerCase());
+        });
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+            <div className="bg-[#1e293b] w-full max-w-lg rounded-2xl border border-[#334155] shadow-2xl animate-in zoom-in duration-200">
+              <div className="flex items-center justify-between p-6 border-b border-[#334155]">
+                <div>
+                  <h3 className="text-lg font-bold text-purple-400 uppercase tracking-tighter">🔗 Cruzar Movimiento</h3>
+                  <p className="text-[10px] text-slate-400 mt-0.5 font-bold">{labelTipo[tipoCruce]}</p>
+                </div>
+                <button onClick={() => { setModalCruzarOpen(false); setItemCruceTarget(null); }} className="text-slate-500 hover:text-white text-xl transition-colors">✕</button>
+              </div>
+
+              {!itemCruceTarget ? (
+                <>
+                  <div className="px-4 pt-4">
+                    <input
+                      type="text"
+                      placeholder="Buscar por nombre, concepto o referencia..."
+                      className="w-full bg-black/40 border border-[#334155] rounded-lg px-4 py-2.5 text-sm text-white focus:border-purple-500 outline-none transition-colors placeholder:text-slate-600"
+                      value={busquedaCruce}
+                      onChange={e => setBusquedaCruce(e.target.value)}
+                      autoFocus
+                    />
+                  </div>
+                  <div className="p-4 max-h-[52vh] overflow-y-auto space-y-2">
+                    {loadingCruce ? (
+                      <p className="text-center text-slate-400 py-8">Cargando pendientes...</p>
+                    ) : filtrados.length === 0 ? (
+                      <p className="text-center text-slate-400 py-8">No hay registros pendientes.</p>
+                    ) : filtrados.map(item => {
+                      const nombre = item.cliente || item.proveedor || item.socio || '—';
+                      const ref = item.nro_documento || 'S/R';
+                      const fecha = item.fecha_vencimiento || item.fecha_emision || '—';
+                      return (
+                        <button key={item.id} onClick={() => setItemCruceTarget(item)} className="w-full text-left bg-black/30 hover:bg-purple-500/10 border border-[#334155] hover:border-purple-500/40 rounded-xl p-4 transition-all">
+                          <div className="flex justify-between items-start">
+                            <div>
+                              <p className="font-bold text-white text-sm uppercase">{nombre}</p>
+                              <p className="text-[10px] text-slate-400 mt-0.5 truncate max-w-[260px]">{(item.concepto || '—').replace(/^auto-generado:\s*/i, '')}</p>
+                              <p className="text-[10px] font-mono text-[#38bdf8] mt-1">{ref} · {fecha}</p>
+                            </div>
+                            <div className="text-right shrink-0 ml-3">
+                              <p className="font-black font-mono text-sm text-white">{fmtLiq(parseFloat(item.saldo_pendiente))} <span className="text-[10px] font-normal">{item.moneda}</span></p>
+                              <span className="text-[9px] font-bold px-2 py-0.5 rounded mt-1 inline-block bg-amber-500/20 text-amber-400">{(item.estatus || 'Pendiente').toUpperCase()}</span>
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </>
+              ) : (
+                <div className="p-6 space-y-4">
+                  <div className="bg-black/30 border border-purple-500/20 rounded-xl p-4 text-xs space-y-1">
+                    <p className="text-slate-400">Registro: <span className="text-white font-bold uppercase">{itemCruceTarget.cliente || itemCruceTarget.proveedor || itemCruceTarget.socio}</span></p>
+                    <p className="text-slate-400">Concepto: <span className="text-white">{(itemCruceTarget.concepto || '—').replace(/^auto-generado:\s*/i, '')}</span></p>
+                    <p className="text-slate-400">Saldo pendiente: <span className="font-mono font-bold text-white">{fmtLiq(parseFloat(itemCruceTarget.saldo_pendiente))} {itemCruceTarget.moneda}</span></p>
+                    <p className="text-amber-400 text-[11px] mt-2">⚠️ Al confirmar, este registro quedará marcado como <strong>{tipoCruce.startsWith('socio') ? 'Compensado' : 'Pagado'}</strong> con saldo 0.</p>
+                  </div>
+                  <div className="flex justify-between items-center pt-2 border-t border-[#334155]">
+                    <button onClick={() => setItemCruceTarget(null)} className="text-slate-400 font-bold hover:text-white text-xs transition-colors">← VOLVER</button>
+                    <button onClick={confirmarCruce} className="bg-purple-500 text-white px-6 py-2 rounded-lg font-black uppercase text-xs hover:bg-purple-400 shadow-lg">🔗 CONFIRMAR CRUCE</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
+
       {/* EL RECIBO DE IMPRESIÓN */}
       {ticketImpresion && (
         <div id="seccion-recibo-imprimir" className="hidden print:block font-sans">

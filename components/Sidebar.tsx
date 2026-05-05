@@ -64,11 +64,7 @@ export default function Sidebar() {
               💳 Cajas y Bancos (Config.)
             </Link>
 
-            <Link href="/bancos" className={`block pl-14 pr-6 py-3 text-xs font-bold transition-all ${isActive('/bancos') ? 'text-[#10b981] bg-[#10b981]/5' : 'text-slate-400 hover:text-[#38bdf8] hover:bg-[#38bdf8]/5'}`}>
-              🏦 Gestión de Bancos
-            </Link>
-
-            <Link href="/caja" className={`block pl-14 pr-6 py-3 text-xs font-bold transition-all ${isActive('/caja') ? 'text-[#10b981] bg-[#10b981]/5' : 'text-slate-400 hover:text-emerald-400 hover:bg-emerald-500/5'}`}>
+<Link href="/caja" className={`block pl-14 pr-6 py-3 text-xs font-bold transition-all ${isActive('/caja') ? 'text-[#10b981] bg-[#10b981]/5' : 'text-slate-400 hover:text-emerald-400 hover:bg-emerald-500/5'}`}>
               💰 Estado de Cuenta
             </Link>
 

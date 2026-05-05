@@ -11,13 +11,12 @@ export default function CuentasSociosPage() {
   const [modalAbonoOpen, setModalAbonoOpen] = useState(false);
   const [registroSeleccionado, setRegistroSeleccionado] = useState<any>(null);
 
-  const [nuevoDoc, setNuevoDoc] = useState({ 
-    socio: '', tipo: 'Por Cobrar', nro_documento: '', concepto: '', monto_total: '', moneda: 'USD', tasa: '36,500', fecha_emision: '' 
+  const [nuevoDoc, setNuevoDoc] = useState({
+    socio: '', tipo: 'Por Cobrar', nro_documento: '', concepto: '', monto_total: '', moneda: 'USD', tasa: '36,500', fecha_emision: '', caja_banco: ''
   });
   const [abono, setAbono] = useState('');
-  
-  // NUEVO ESTADO: Para capturar la referencia al momento de liquidar
   const [refLiquidacion, setRefLiquidacion] = useState('');
+  const [tabActivo, setTabActivo] = useState<'Por Cobrar' | 'Por Pagar'>('Por Cobrar');
 
   useEffect(() => { cargarDatos(); }, []);
 
@@ -59,12 +58,13 @@ export default function CuentasSociosPage() {
           tipo: nuevoDoc.tipo, nro_documento: nuevoDoc.nro_documento || 'S/N', concepto: nuevoDoc.concepto || 'Registro Manual',
           monto_total: montoNum, saldo_pendiente: montoNum, moneda: nuevoDoc.moneda,
           tasa: tasaNum, equivalente: nuevoDoc.moneda === 'Bs' ? (montoNum / tasaNum) : (montoNum * tasaNum), moneda_equivalente: nuevoDoc.moneda === 'Bs' ? 'USD' : 'Bs',
-          fecha_emision: nuevoDoc.fecha_emision, estatus: 'Pendiente'
+          fecha_emision: nuevoDoc.fecha_emision, estatus: 'Pendiente',
+          caja_banco: nuevoDoc.caja_banco.trim().toUpperCase() || 'S/E'
         })
       });
       if (res.ok) {
         alert("✅ Registro guardado."); setModalNuevoOpen(false);
-        setNuevoDoc({ socio: '', tipo: 'Por Cobrar', nro_documento: '', concepto: '', monto_total: '', moneda: 'USD', tasa: '36,500', fecha_emision: '' });
+        setNuevoDoc({ socio: '', tipo: 'Por Cobrar', nro_documento: '', concepto: '', monto_total: '', moneda: 'USD', tasa: '36,500', fecha_emision: '', caja_banco: '' });
         cargarDatos();
       } else alert("❌ Error al guardar.");
     } catch (e) {}
@@ -103,25 +103,43 @@ export default function CuentasSociosPage() {
     } catch (e) {}
   };
 
+  const handleDelete = async (id: string) => {
+    const confirmar = window.confirm('¿Estás seguro de que deseas eliminar este registro de compensación? Esta acción no se puede deshacer.');
+    if (!confirmar) return;
+    try {
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/cuentas_socios?id=eq.${id}`, {
+        method: 'DELETE',
+        headers: SUPABASE_HEADERS,
+      });
+      if (res.ok) {
+        setCuentas(prev => prev.filter(c => c.id !== id));
+      } else {
+        alert('❌ No se pudo eliminar el registro.');
+      }
+    } catch {
+      alert('❌ Error de conexión al intentar eliminar.');
+    }
+  };
+
   const handleImprimir = () => {
     window.print();
   };
 
-  // MAGIA: Filtramos la búsqueda y además ORDENAMOS para mandar los "Compensados" al final
   const filtrados = cuentas
+    .filter(c => c.tipo === tabActivo)
     .filter(c => c.socio.toLowerCase().includes(busqueda.toLowerCase()) || c.concepto?.toLowerCase().includes(busqueda.toLowerCase()) || c.nro_documento?.toLowerCase().includes(busqueda.toLowerCase()))
     .sort((a, b) => {
-      // Si "a" está compensado y "b" no, "a" va al fondo (1)
       if (a.estatus === 'Compensado' && b.estatus !== 'Compensado') return 1;
-      // Si "b" está compensado y "a" no, "b" va al fondo (-1)
       if (a.estatus !== 'Compensado' && b.estatus === 'Compensado') return -1;
-      // Si ambos son iguales, se quedan como estaban (ordenados por fecha desc)
       return 0;
     });
 
+  const contPorCobrar = cuentas.filter(c => c.tipo === 'Por Cobrar' && c.estatus !== 'Compensado').length;
+  const contPorPagar  = cuentas.filter(c => c.tipo === 'Por Pagar'  && c.estatus !== 'Compensado').length;
+
   const renderTipoAccion = (tipo: string) => {
-    if (tipo === 'Por Cobrar') return <span className="px-3 py-1 rounded bg-emerald-500/20 text-emerald-400 font-black text-[10px] tracking-wider border border-emerald-500/30">📥 PENDIENTE RECIBIR</span>;
-    return <span className="px-3 py-1 rounded bg-rose-500/20 text-rose-400 font-black text-[10px] tracking-wider border border-rose-500/30">📤 PENDIENTE ENTREGAR</span>;
+    if (tipo === 'Por Cobrar') return <span className="px-3 py-1 rounded bg-emerald-500/20 text-emerald-400 font-black text-[10px] tracking-wider border border-emerald-500/30">📥 POR RECIBIR</span>;
+    return <span className="px-3 py-1 rounded bg-rose-500/20 text-rose-400 font-black text-[10px] tracking-wider border border-rose-500/30">📤 POR ENTREGAR</span>;
   };
 
   const totalPorCobrar = cuentas.filter(c => c.moneda === 'USD' && c.tipo === 'Por Cobrar' && c.estatus !== 'Pagado').reduce((acc, el) => acc + parseFloat(el.saldo_pendiente), 0);
@@ -175,7 +193,7 @@ export default function CuentasSociosPage() {
               <span className="text-base">🖨️</span> IMPRIMIR
             </button>
 
-            <button onClick={() => setModalNuevoOpen(true)} className="bg-purple-500 hover:bg-purple-400 text-white px-4 py-3 rounded-lg font-black text-xs uppercase shadow-[0_0_15px_rgba(168,85,247,0.3)]">
+            <button onClick={() => { setNuevoDoc(d => ({ ...d, tipo: tabActivo })); setModalNuevoOpen(true); }} className="bg-purple-500 hover:bg-purple-400 text-white px-4 py-3 rounded-lg font-black text-xs uppercase shadow-[0_0_15px_rgba(168,85,247,0.3)]">
               + Registro Manual
             </button>
           </div>
@@ -183,6 +201,36 @@ export default function CuentasSociosPage() {
 
         <div className="relative w-full md:w-96 print:hidden">
           <input type="text" placeholder="Buscar socio, concepto o referencia..." className="w-full bg-[#1e293b] border border-[#334155] rounded-lg py-3 px-4 text-sm text-white focus:border-purple-400 outline-none" value={busqueda} onChange={(e) => setBusqueda(e.target.value)} />
+        </div>
+
+        {/* PESTAÑAS */}
+        <div className="flex gap-3 print:hidden">
+          <button
+            onClick={() => setTabActivo('Por Cobrar')}
+            className={`flex items-center gap-2 px-5 py-2.5 rounded-lg font-black text-xs uppercase border transition-all ${
+              tabActivo === 'Por Cobrar'
+                ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-400 shadow-[0_0_12px_rgba(16,185,129,0.2)]'
+                : 'bg-white/5 border-transparent text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            📥 Por Recibir
+            <span className={`px-1.5 py-0.5 rounded text-[10px] font-black ${tabActivo === 'Por Cobrar' ? 'bg-emerald-500/30 text-emerald-300' : 'bg-white/10 text-slate-500'}`}>
+              {contPorCobrar}
+            </span>
+          </button>
+          <button
+            onClick={() => setTabActivo('Por Pagar')}
+            className={`flex items-center gap-2 px-5 py-2.5 rounded-lg font-black text-xs uppercase border transition-all ${
+              tabActivo === 'Por Pagar'
+                ? 'bg-rose-500/20 border-rose-500/40 text-rose-400 shadow-[0_0_12px_rgba(244,63,94,0.2)]'
+                : 'bg-white/5 border-transparent text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            📤 Por Entregar
+            <span className={`px-1.5 py-0.5 rounded text-[10px] font-black ${tabActivo === 'Por Pagar' ? 'bg-rose-500/30 text-rose-300' : 'bg-white/10 text-slate-500'}`}>
+              {contPorPagar}
+            </span>
+          </button>
         </div>
 
         {/* ZONA DE IMPRESIÓN DE LA TABLA */}
@@ -198,67 +246,77 @@ export default function CuentasSociosPage() {
             </div>
           </div>
 
-          <table className="w-full text-left text-xs whitespace-nowrap">
+          <table className="w-full text-left text-xs">
             <thead className="bg-[#0f172a] text-slate-400 uppercase tracking-widest border-b border-[#334155]">
               <tr>
-                <th className="p-4">FECHA</th>
-                <th className="p-4">SOCIO / CONCEPTO</th>
-                <th className="p-4">CAJA / BANCO</th>
-                <th className="p-4">REFERENCIA</th>
-                <th className="p-4 text-right">MONTO REGISTRADO</th>
-                <th className="p-4 text-right">PENDIENTE (BASE)</th>
-                <th className="p-4 text-right">CONTRAPARTE (CALCULADA)</th>
-                <th className="p-4 text-center">ESTADO</th>
-                <th className="p-4 text-center ocultar-print">GESTIÓN</th>
+                <th className="px-3 py-3 w-[90px]">FECHA</th>
+                <th className="px-3 py-3">SOCIO / CONCEPTO</th>
+                <th className="px-3 py-3 w-[110px]">CAJA / BANCO</th>
+                <th className="px-1 py-3 w-[80px]">REFERENCIA</th>
+                <th className="px-1 py-3 text-right w-[130px]">MONTO REGISTRADO</th>
+                <th className="px-2 py-3 text-right w-[100px]">PENDIENTE</th>
+                <th className="px-2 py-3 text-right w-[120px]">CONTRAPARTE</th>
+                <th className="px-2 py-3 text-center w-[160px]">ESTADO</th>
+                <th className="px-3 py-3 text-center w-[90px] ocultar-print">GESTIÓN</th>
+                <th className="px-3 py-3 text-center w-[60px] ocultar-print">ACCS.</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#334155]">
-              {isLoading ? <tr><td colSpan={9} className="p-10 text-center">Cargando...</td></tr> : filtrados.map(item => {
-                
+              {isLoading ? <tr><td colSpan={10} className="p-10 text-center">Cargando...</td></tr> : filtrados.map(item => {
+
                 const eqCalculado = item.equivalente ? item.equivalente : (item.moneda === 'Bs' ? (item.monto_total / (item.tasa || 1)) : (item.monto_total * (item.tasa || 1)));
                 const monEqCalculada = item.moneda_equivalente || (item.moneda === 'USD' ? 'Bs' : 'USD');
 
                 return (
                 <tr key={item.id} className={`hover:bg-white/5 transition-colors text-white ${item.estatus === 'Compensado' ? 'opacity-40' : ''}`}>
-                  <td className="p-4 font-mono text-[11px] text-slate-300">{item.fecha_emision}</td>
-                  <td className="p-4">
-                    <div className="font-bold text-sm uppercase text-white">{item.socio}</div>
-                    <div className="text-slate-400 text-[10px] uppercase truncate max-w-[150px] mt-1" title={item.concepto}>{item.concepto}</div>
+                  <td className="px-3 py-2 font-mono text-[11px] text-slate-300 whitespace-nowrap">{item.fecha_emision}</td>
+                  <td className="px-3 py-2">
+                    <div className="font-bold text-sm uppercase text-white leading-tight">{item.socio}</div>
+                    <div className="text-slate-400 text-[10px] uppercase mt-0.5 whitespace-normal leading-snug max-w-[220px]">{(item.concepto || '').replace(/^auto-generado:\s*/i, '')}</div>
                   </td>
-                  <td className="p-4">
-                    <div className="text-slate-300 text-[10px] font-bold uppercase bg-[#0f172a] px-2 py-1 rounded inline-block border border-[#334155]">
-                      {item.concepto?.includes('Auto-Generado') ? 'Movimiento Automático' : 'Registro Manual'}
+                  <td className="px-3 py-2">
+                    <div className="text-slate-200 text-[10px] font-bold uppercase bg-[#0f172a] px-2 py-1 rounded inline-block border border-[#334155] whitespace-nowrap">
+                      {item.caja_banco && item.caja_banco !== 'S/E' ? item.caja_banco : '—'}
                     </div>
                   </td>
-                  <td className="p-4">
-                    <div className="font-mono text-[11px] font-bold text-[#38bdf8] uppercase">
+                  <td className="px-1 py-2">
+                    <div className="font-mono text-[11px] font-bold text-[#38bdf8] uppercase whitespace-nowrap">
                       {item.nro_documento || 'S/R'}
                     </div>
                   </td>
-                  <td className="p-4 text-right font-mono text-slate-400 text-sm">
+                  <td className="px-1 py-2 text-right font-mono text-slate-400 text-[11px] whitespace-nowrap">
                     {formatearMonto(item.monto_total)} <span className="text-[10px]">{item.moneda}</span>
                   </td>
-                  <td className="p-4 text-right font-mono text-slate-300 font-bold">
+                  <td className="px-2 py-2 text-right font-mono text-slate-300 font-bold text-[11px] whitespace-nowrap">
                     {formatearMonto(item.saldo_pendiente)} <span className="text-[10px]">{item.moneda}</span>
                   </td>
-                  <td className={`p-4 text-right font-mono font-bold text-sm ${item.tipo === 'Por Cobrar' ? 'text-emerald-400 bg-emerald-500/5' : 'text-rose-400 bg-rose-500/5'}`}>
+                  <td className={`px-3 py-2 text-right font-mono font-bold text-[11px] whitespace-nowrap ${item.tipo === 'Por Cobrar' ? 'text-emerald-400 bg-emerald-500/5' : 'text-rose-400 bg-rose-500/5'}`}>
                     {formatearMonto(eqCalculado)} <span className="text-[10px]">{monEqCalculada}</span>
-                    <div className="text-[9px] text-slate-500 font-normal mt-1">Tasa: {formatearMonto(item.tasa || 1)}</div>
+                    <div className="text-[9px] text-slate-500 font-normal mt-0.5">Tasa: {formatearMonto(item.tasa || 1)}</div>
                   </td>
-                  <td className="p-4 text-center">
+                  <td className="px-3 py-2 text-center">
                     {item.estatus !== 'Compensado' ? renderTipoAccion(item.tipo) : <span className="text-slate-500 text-[10px] font-bold border border-slate-600 px-2 py-1 rounded">COMPENSADO</span>}
                   </td>
-                  <td className="p-4 text-center ocultar-print">
+                  <td className="px-3 py-2 text-center ocultar-print">
                     {item.estatus !== 'Compensado' ? (
-                      <button onClick={() => { 
-                        setRegistroSeleccionado(item); 
-                        setAbono(formatearMonto(item.saldo_pendiente)); 
-                        setRefLiquidacion(''); // Reseteamos la referencia al abrir
-                        setModalAbonoOpen(true); 
-                      }} className="bg-purple-500 hover:bg-purple-400 text-white px-4 py-2 rounded text-[10px] font-black uppercase transition-colors shadow-lg">
+                      <button onClick={() => {
+                        setRegistroSeleccionado(item);
+                        setAbono(formatearMonto(item.saldo_pendiente));
+                        setRefLiquidacion('');
+                        setModalAbonoOpen(true);
+                      }} className="bg-purple-500 hover:bg-purple-400 text-white px-3 py-1.5 rounded text-[10px] font-black uppercase transition-colors shadow-lg whitespace-nowrap">
                         Liquidar
                       </button>
                     ) : <span className="text-slate-500 text-[10px] font-bold">CERRADO</span>}
+                  </td>
+                  <td className="px-3 py-2 text-center ocultar-print">
+                    <button
+                      onClick={() => handleDelete(item.id)}
+                      className="text-rose-400 hover:text-rose-300 transition-colors text-base"
+                      title="Eliminar registro"
+                    >
+                      🗑️
+                    </button>
                   </td>
                 </tr>
               )})}
@@ -286,6 +344,10 @@ export default function CuentasSociosPage() {
                 <div>
                   <label className="text-[10px] font-bold text-slate-400 uppercase">Referencia / Comprobante</label>
                   <input type="text" className="w-full bg-black/40 border border-[#334155] rounded-lg p-3 mt-1 text-white font-mono uppercase" value={nuevoDoc.nro_documento} onChange={(e)=>setNuevoDoc({...nuevoDoc, nro_documento: e.target.value})} placeholder="Ej: REF-5432" />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase">Caja / Banco</label>
+                  <input type="text" className="w-full bg-black/40 border border-[#334155] rounded-lg p-3 mt-1 text-white font-bold uppercase" value={nuevoDoc.caja_banco} onChange={(e)=>setNuevoDoc({...nuevoDoc, caja_banco: e.target.value})} placeholder="Ej: BANESCO, EFECTIVO, ZELLE..." />
                 </div>
                 <div>
                   <label className="text-[10px] font-bold text-slate-400 uppercase">Fecha</label>
