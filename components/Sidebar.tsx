@@ -1,12 +1,14 @@
 "use client";
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { useState } from 'react';
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const router = useRouter();
   
   const [menusAbiertos, setMenusAbiertos] = useState<string[]>(['finanzas', 'conciliaciones', 'comercial', 'facturacion']);
+  const [loggingOut, setLoggingOut] = useState(false);
 
   const toggleMenu = (menu: string) => {
     if (menusAbiertos.includes(menu)) {
@@ -18,6 +20,16 @@ export default function Sidebar() {
 
   const isMenuOpen = (menu: string) => menusAbiertos.includes(menu);
   const isActive = (path: string) => pathname === path;
+
+  async function handleLogout() {
+    setLoggingOut(true);
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' });
+      router.push('/login');
+    } catch {
+      setLoggingOut(false);
+    }
+  }
 
   return (
     <aside className="w-72 h-screen bg-[#0f172a] text-slate-300 flex flex-col fixed left-0 top-0 border-r border-[#1e293b] shadow-2xl z-50">
@@ -64,7 +76,7 @@ export default function Sidebar() {
               💳 Cajas y Bancos (Config.)
             </Link>
 
-<Link href="/caja" className={`block pl-14 pr-6 py-3 text-xs font-bold transition-all ${isActive('/caja') ? 'text-[#10b981] bg-[#10b981]/5' : 'text-slate-400 hover:text-emerald-400 hover:bg-emerald-500/5'}`}>
+            <Link href="/caja" className={`block pl-14 pr-6 py-3 text-xs font-bold transition-all ${isActive('/caja') ? 'text-[#10b981] bg-[#10b981]/5' : 'text-slate-400 hover:text-emerald-400 hover:bg-emerald-500/5'}`}>
               💰 Estado de Cuenta
             </Link>
 
@@ -157,12 +169,31 @@ export default function Sidebar() {
 
       </nav>
 
-      {/* FOOTER */}
-      <div className="p-6 border-t border-[#1e293b] text-center bg-black/10">
-        <div className="inline-flex items-center justify-center gap-2 bg-[#1e293b] rounded-full px-4 py-2 border border-[#334155]">
+      {/* FOOTER CON CERRAR SESIÓN */}
+      <div className="p-4 border-t border-[#1e293b] bg-black/10 space-y-3">
+        {/* Indicador online */}
+        <div className="flex items-center justify-center gap-2">
           <span className="w-2 h-2 rounded-full bg-[#10b981] animate-pulse shadow-[0_0_8px_#10b981]"></span>
-          <span className="text-[10px] font-bold text-slate-300 tracking-widest">SISTEMA ONLINE</span>
+          <span className="text-[10px] font-bold text-slate-500 tracking-widest">SISTEMA ONLINE</span>
         </div>
+
+        {/* Botón cerrar sesión */}
+        <button
+          onClick={handleLogout}
+          disabled={loggingOut}
+          className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-rose-500/20 bg-rose-500/5 hover:bg-rose-500/15 hover:border-rose-500/40 text-rose-400 hover:text-rose-300 text-xs font-bold transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {loggingOut ? (
+            <>
+              <span className="w-3 h-3 border-2 border-rose-400/30 border-t-rose-400 rounded-full animate-spin" />
+              Saliendo...
+            </>
+          ) : (
+            <>
+              <span>🚪</span> Cerrar Sesión
+            </>
+          )}
+        </button>
       </div>
 
     </aside>
