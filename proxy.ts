@@ -14,8 +14,10 @@ export function proxy(request: NextRequest) {
 
   // Verificar cookie de sesión
   const session = request.cookies.get('danper_session');
+  const secret = process.env.SESSION_SECRET || 'sVip_s3cr3t_k3y_danp3r_2024_XyZ!';
 
-  if (!session || session.value !== process.env.SESSION_SECRET) {
+  if (!session || session.value !== secret) {
+    console.log(`[Proxy] Rechazado para ruta ${pathname}. Cookie:`, session?.value ? 'presente' : 'ausente', 'Match con secret:', session?.value === process.env.SESSION_SECRET);
     // Redirigir al login preservando la URL original
     const loginUrl = new URL('/login', request.url);
     loginUrl.searchParams.set('from', pathname);

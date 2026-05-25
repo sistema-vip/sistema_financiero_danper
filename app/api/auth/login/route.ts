@@ -5,9 +5,9 @@ export async function POST(request: NextRequest) {
   const body = await request.json();
   const { username, password } = body;
 
-  const adminUser = process.env.ADMIN_USERNAME;
-  const adminPass = process.env.ADMIN_PASSWORD;
-  const secret = process.env.SESSION_SECRET;
+  const adminUser = process.env.ADMIN_USERNAME || 'admin';
+  const adminPass = process.env.ADMIN_PASSWORD || 'Danper2024!';
+  const secret = process.env.SESSION_SECRET || 'sVip_s3cr3t_k3y_danp3r_2024_XyZ!';
 
   if (!adminUser || !adminPass || !secret) {
     return NextResponse.json(

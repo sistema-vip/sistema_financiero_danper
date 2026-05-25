@@ -32,6 +32,7 @@ export default function AdminFinanzasPage() {
   const [pendientesCruce, setPendientesCruce] = useState<any[]>([]);
   const [itemCruceTarget, setItemCruceTarget] = useState<any>(null);
   const [loadingCruce, setLoadingCruce] = useState(false);
+  const [crucePendiente, setCrucePendiente] = useState<{item: any, tabla: string, nuevoEstatus: string} | null>(null);
   const [busquedaCruce, setBusquedaCruce] = useState('');
 
   // Estado principal
@@ -219,10 +220,11 @@ export default function AdminFinanzasPage() {
         
         datosTicket = { ...payloadEgreso, tipo: 'TRANSFERENCIA INTERNA', nombre_caja: `${cajaOrigen.nombre} ➔ ${cajaDestino.nombre}`, valor_calculado: valorCalculadoFinal };
       } else {
+        const descCruce = crucePendiente ? ` [Cruzado con: ${crucePendiente.item.nro_documento || crucePendiente.item.referencia || 'S/N'}]` : '';
         const payload = { 
           nro_recibo: nroRecibo, fecha: movimiento.fecha, caja_id: movimiento.caja_id, referencia: movimiento.referencia || 'S/R', 
           persona: movimiento.persona.toUpperCase(), monto: montoNum, moneda: movimiento.moneda, tasa: tasaNum, 
-          tipo: movimiento.tipo, clasificacion: movimiento.clasificacion, descripcion: movimiento.descripcion, 
+          tipo: movimiento.tipo, clasificacion: movimiento.clasificacion, descripcion: (movimiento.descripcion || '') + descCruce, 
           estatus_facturacion: estatusFact,
           estado_conciliacion: estatusConciliacion 
         };
@@ -236,41 +238,49 @@ export default function AdminFinanzasPage() {
         
         datosTicket = { ...payload, nombre_caja: cajasBD.find(c => c.id.toString() === movimiento.caja_id)?.nombre, valor_calculado: valorCalculadoFinal };
 
-        if (clasifNorm.includes('PRESTAMO') || clasifNorm.includes('PRÉSTAMO')) {
-          if (movimiento.tipo === 'Recibo de Ingreso') {
-            await fetch(`${SUPABASE_URL}/rest/v1/cuentas_por_pagar`, {
+        if (crucePendiente) {
+          await fetch(`${SUPABASE_URL}/rest/v1/${crucePendiente.tabla}?id=eq.${crucePendiente.item.id}`, {
+            method: 'PATCH', headers: SUPABASE_HEADERS,
+            body: JSON.stringify({ saldo_pendiente: 0, estatus: crucePendiente.nuevoEstatus })
+          });
+        } else {
+          if (clasifNorm.includes('PRESTAMO') || clasifNorm.includes('PRÉSTAMO')) {
+            if (movimiento.tipo === 'Recibo de Ingreso') {
+              await fetch(`${SUPABASE_URL}/rest/v1/cuentas_por_pagar`, {
+                method: 'POST', headers: SUPABASE_HEADERS, body: JSON.stringify({
+                  categoria: 'Préstamos Recibidos', proveedor: movimiento.persona.toUpperCase(), nro_documento: movimiento.referencia || `REC-${nroRecibo}`,
+                  concepto: `Auto-Generado: ${movimiento.descripcion || 'Préstamo recibido'}`, monto_total: montoNum, saldo_pendiente: montoNum,
+                  moneda: movimiento.moneda, fecha_emision: movimiento.fecha, fecha_vencimiento: movimiento.fecha, estatus: 'Pendiente'
+                })
+              });
+            } else if (movimiento.tipo === 'Recibo de Egreso') {
+              await fetch(`${SUPABASE_URL}/rest/v1/cuentas_por_cobrar`, {
+                method: 'POST', headers: SUPABASE_HEADERS, body: JSON.stringify({
+                  categoria: 'Préstamos Otorgados', cliente: movimiento.persona.toUpperCase(), nro_documento: movimiento.referencia || `REC-${nroRecibo}`,
+                  concepto: `Auto-Generado: ${movimiento.descripcion || 'Préstamo otorgado'}`, monto_total: montoNum, saldo_pendiente: montoNum,
+                  moneda: movimiento.moneda, fecha_emision: movimiento.fecha, fecha_vencimiento: movimiento.fecha, estatus: 'Pendiente'
+                })
+              });
+            }
+          }
+
+          if (clasifNorm.includes('MOVIMIENTO SOCIO') || clasifNorm.includes('PROVISION') || clasifNorm.includes('PROVISIÓN')) {
+            const tipoCompensacion = movimiento.tipo === 'Recibo de Egreso' ? 'Por Pagar' : 'Por Cobrar';
+            await fetch(`${SUPABASE_URL}/rest/v1/cuentas_socios`, {
               method: 'POST', headers: SUPABASE_HEADERS, body: JSON.stringify({
-                categoria: 'Préstamos Recibidos', proveedor: movimiento.persona.toUpperCase(), nro_documento: movimiento.referencia || `REC-${nroRecibo}`,
-                concepto: `Auto-Generado: ${movimiento.descripcion || 'Préstamo recibido'}`, monto_total: montoNum, saldo_pendiente: montoNum,
-                moneda: movimiento.moneda, fecha_emision: movimiento.fecha, fecha_vencimiento: movimiento.fecha, estatus: 'Pendiente'
-              })
-            });
-          } else if (movimiento.tipo === 'Recibo de Egreso') {
-            await fetch(`${SUPABASE_URL}/rest/v1/cuentas_por_cobrar`, {
-              method: 'POST', headers: SUPABASE_HEADERS, body: JSON.stringify({
-                categoria: 'Préstamos Otorgados', cliente: movimiento.persona.toUpperCase(), nro_documento: movimiento.referencia || `REC-${nroRecibo}`,
-                concepto: `Auto-Generado: ${movimiento.descripcion || 'Préstamo otorgado'}`, monto_total: montoNum, saldo_pendiente: montoNum,
-                moneda: movimiento.moneda, fecha_emision: movimiento.fecha, fecha_vencimiento: movimiento.fecha, estatus: 'Pendiente'
+                socio: movimiento.persona.toUpperCase(), tipo: tipoCompensacion, nro_documento: movimiento.referencia || `REC-${nroRecibo}`,
+                concepto: `Auto-Generado: Cambio/Traspaso - ${movimiento.descripcion || 'Mover fondos'}`, monto_total: montoNum,
+                saldo_pendiente: montoNum, moneda: movimiento.moneda, tasa: tasaNum, equivalente: valorEquivalente,
+                moneda_equivalente: monedaEquivalente, fecha_emision: movimiento.fecha, estatus: 'Pendiente'
               })
             });
           }
-        }
-
-        if (clasifNorm.includes('MOVIMIENTO SOCIO') || clasifNorm.includes('PROVISION') || clasifNorm.includes('PROVISIÓN')) {
-          const tipoCompensacion = movimiento.tipo === 'Recibo de Egreso' ? 'Por Cobrar' : 'Por Pagar';
-          await fetch(`${SUPABASE_URL}/rest/v1/cuentas_socios`, {
-            method: 'POST', headers: SUPABASE_HEADERS, body: JSON.stringify({
-              socio: movimiento.persona.toUpperCase(), tipo: tipoCompensacion, nro_documento: movimiento.referencia || `REC-${nroRecibo}`,
-              concepto: `Auto-Generado: Cambio/Traspaso - ${movimiento.descripcion || 'Mover fondos'}`, monto_total: montoNum,
-              saldo_pendiente: montoNum, moneda: movimiento.moneda, tasa: tasaNum, equivalente: valorEquivalente,
-              moneda_equivalente: monedaEquivalente, fecha_emision: movimiento.fecha, estatus: 'Pendiente'
-            })
-          });
         }
       }
 
       setTicketImpresion(datosTicket); 
       setMovimiento({ ...movimiento, persona: '', monto: '', descripcion: '', referencia: '', clasificacion: '', caja_destino_id: '' });
+      setCrucePendiente(null);
       obtenerUltimoRecibo(); 
       
       setTimeout(() => { 
@@ -356,17 +366,10 @@ export default function AdminFinanzasPage() {
     const esSocio = tipoCruce.startsWith('socio');
     const tabla = esSocio ? 'cuentas_socios' : tipoCruce === 'cxc' ? 'cuentas_por_cobrar' : 'cuentas_por_pagar';
     const nuevoEstatus = esSocio ? 'Compensado' : 'Pagado';
-    try {
-      const res = await fetch(`${SUPABASE_URL}/rest/v1/${tabla}?id=eq.${itemCruceTarget.id}`, {
-        method: 'PATCH', headers: SUPABASE_HEADERS,
-        body: JSON.stringify({ saldo_pendiente: 0, estatus: nuevoEstatus })
-      });
-      if (res.ok) {
-        alert(`✅ Cruce aplicado. Registro marcado como ${nuevoEstatus}.`);
-        setModalCruzarOpen(false);
-        setItemCruceTarget(null);
-      } else alert('❌ Error al aplicar el cruce.');
-    } catch { alert('❌ Error de conexión.'); }
+    setCrucePendiente({ item: itemCruceTarget, tabla, nuevoEstatus });
+    alert(`✅ Cruce vinculado. Se aplicará al registrar el movimiento.`);
+    setModalCruzarOpen(false);
+    setItemCruceTarget(null);
   };
 
   const esTransferencia = movimiento.tipo === 'Transferencia Interna';
@@ -419,16 +422,27 @@ export default function AdminFinanzasPage() {
                 )}
               </button>
               <div className="relative">
-                <button onClick={() => setDropdownCruzarOpen(v => !v)} className="flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-xs uppercase transition-all border border-purple-500/40 bg-purple-500/10 text-purple-300 hover:bg-purple-500/20 hover:border-purple-400">
-                  🔗 Cruzar con... {dropdownCruzarOpen ? '▲' : '▾'}
-                </button>
-                {dropdownCruzarOpen && (
-                  <div className="absolute z-50 left-0 top-full mt-1 flex flex-col bg-[#1e293b] border border-[#334155] rounded-xl shadow-2xl overflow-hidden w-52">
-                    <button onClick={() => { setDropdownCruzarOpen(false); abrirCruzar('cxc'); }} className="px-4 py-3 text-left text-xs font-bold text-[#38bdf8] hover:bg-[#38bdf8]/10 transition-colors">📥 Cuenta por Cobrar</button>
-                    <button onClick={() => { setDropdownCruzarOpen(false); abrirCruzar('cxp'); }} className="px-4 py-3 text-left text-xs font-bold text-rose-400 hover:bg-rose-500/10 transition-colors">📤 Cuenta por Pagar</button>
-                    <button onClick={() => { setDropdownCruzarOpen(false); abrirCruzar('socio-cobrar'); }} className="px-4 py-3 text-left text-xs font-bold text-emerald-400 hover:bg-emerald-500/10 transition-colors">🟢 Socio: Por Recibir</button>
-                    <button onClick={() => { setDropdownCruzarOpen(false); abrirCruzar('socio-pagar'); }} className="px-4 py-3 text-left text-xs font-bold text-amber-400 hover:bg-amber-500/10 transition-colors">🔴 Socio: Por Entregar</button>
+                {crucePendiente ? (
+                  <div className="flex items-center gap-2">
+                    <span className="px-3 py-2 rounded-lg font-bold text-[10px] uppercase border border-emerald-500/40 bg-emerald-500/10 text-emerald-400">
+                      🔗 Cruzando con: {crucePendiente.item.nro_documento || crucePendiente.item.referencia || 'S/N'}
+                    </span>
+                    <button onClick={() => setCrucePendiente(null)} className="px-2 py-2 rounded-lg text-rose-400 hover:bg-rose-500/10 transition-colors" title="Quitar cruce">✖</button>
                   </div>
+                ) : (
+                  <>
+                    <button onClick={() => setDropdownCruzarOpen(v => !v)} className="flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-xs uppercase transition-all border border-purple-500/40 bg-purple-500/10 text-purple-300 hover:bg-purple-500/20 hover:border-purple-400">
+                      🔗 Cruzar con... {dropdownCruzarOpen ? '▲' : '▾'}
+                    </button>
+                    {dropdownCruzarOpen && (
+                      <div className="absolute z-50 left-0 top-full mt-1 flex flex-col bg-[#1e293b] border border-[#334155] rounded-xl shadow-2xl overflow-hidden w-52">
+                        <button onClick={() => { setDropdownCruzarOpen(false); abrirCruzar('cxc'); }} className="px-4 py-3 text-left text-xs font-bold text-[#38bdf8] hover:bg-[#38bdf8]/10 transition-colors">📥 Cuenta por Cobrar</button>
+                        <button onClick={() => { setDropdownCruzarOpen(false); abrirCruzar('cxp'); }} className="px-4 py-3 text-left text-xs font-bold text-rose-400 hover:bg-rose-500/10 transition-colors">📤 Cuenta por Pagar</button>
+                        <button onClick={() => { setDropdownCruzarOpen(false); abrirCruzar('socio-cobrar'); }} className="px-4 py-3 text-left text-xs font-bold text-emerald-400 hover:bg-emerald-500/10 transition-colors">🟢 Socio: Por Recibir</button>
+                        <button onClick={() => { setDropdownCruzarOpen(false); abrirCruzar('socio-pagar'); }} className="px-4 py-3 text-left text-xs font-bold text-amber-400 hover:bg-amber-500/10 transition-colors">🔴 Socio: Por Entregar</button>
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             </div>

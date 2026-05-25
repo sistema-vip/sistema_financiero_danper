@@ -188,7 +188,7 @@ export default function CajaPage() {
       }
     }
     if (clasifNorm.includes('MOVIMIENTO SOCIO') || clasifNorm.includes('PROVISION') || clasifNorm.includes('PROVISIÓN')) {
-      const tipoCompensacion = tipo === 'Recibo de Egreso' ? 'Por Cobrar' : 'Por Pagar';
+      const tipoCompensacion = tipo === 'Recibo de Egreso' ? 'Por Pagar' : 'Por Cobrar';
       return { tabla: 'cuentas_socios', payloadExtra: { tipoCompensacion } };
     }
     return null;
@@ -283,7 +283,7 @@ export default function CajaPage() {
             patchPayload.tasa = tasaNueva;
             patchPayload.equivalente = nuevo.moneda === 'Bs' ? (montoNuevo / tasaNueva) : (montoNuevo * tasaNueva);
             patchPayload.moneda_equivalente = nuevo.moneda === 'Bs' ? 'USD' : 'Bs';
-            patchPayload.tipo = tipoNuevo === 'Recibo de Egreso' ? 'Por Cobrar' : 'Por Pagar';
+            patchPayload.tipo = tipoNuevo === 'Recibo de Egreso' ? 'Por Pagar' : 'Por Cobrar';
             patchPayload.caja_banco = cajas.find((c: any) => c.id.toString() === nuevo.caja_id?.toString())?.nombre || 'S/E';
           }
           await fetch(`${SUPABASE_URL}/rest/v1/${autoViejo.tabla}?id=eq.${reg.id}`, {
