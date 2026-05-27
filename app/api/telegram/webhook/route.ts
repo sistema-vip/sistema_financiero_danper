@@ -6,8 +6,9 @@ const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
 // Para restringir quién puede enviar, el usuario puede configurar esto en su .env
-const AUTHORIZED_USERS = process.env.AUTHORIZED_TELEGRAM_USERS 
-  ? process.env.AUTHORIZED_TELEGRAM_USERS.split(',').map(id => id.trim())
+const envAllowedUsers = process.env.TELEGRAM_ALLOWED_USERS || process.env.AUTHORIZED_TELEGRAM_USERS;
+const AUTHORIZED_USERS = envAllowedUsers
+  ? envAllowedUsers.split(',').map(id => id.trim())
   : [];
 
 export async function GET(request: Request) {
