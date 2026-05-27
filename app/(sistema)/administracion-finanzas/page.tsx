@@ -383,13 +383,16 @@ export default function AdminFinanzasPage() {
         }
       }
 
-      // Si proviene de la cola de aprobación, marcarla como aprobada y limpiar el base64 de la BD
+      // Si proviene de la cola de aprobación, marcarla como aprobada
       if (activoPorAprobar) {
-        await fetch(`${SUPABASE_URL}/rest/v1/movimientos_por_aprobar?id=eq.${activoPorAprobar.id}`, {
+        const patchRes = await fetch(`${SUPABASE_URL}/rest/v1/movimientos_por_aprobar?id=eq.${activoPorAprobar.id}`, {
           method: 'PATCH',
           headers: SUPABASE_HEADERS,
-          body: JSON.stringify({ estado: 'Aprobado', imagen_base64: null })
+          body: JSON.stringify({ estado: 'Aprobado' })
         });
+        if (!patchRes.ok) {
+          console.error("Error al actualizar estado en cola:", await patchRes.text());
+        }
         setActivoPorAprobar(null);
         cargarColaPorAprobar();
       }
@@ -572,22 +575,6 @@ export default function AdminFinanzasPage() {
             )}
           </div>
           {/* Indicador de comprobante seleccionado */}
-          {activoPorAprobar && (
-            <div className="mb-6 flex justify-between items-center bg-[#38bdf8]/10 p-3 rounded-lg border border-[#38bdf8]/40 animate-in slide-in-from-top-2 duration-300">
-              <span className="text-xs text-[#38bdf8] font-bold flex items-center gap-2">
-                ✨ Editando comprobante de la cola
-              </span>
-              <button 
-                onClick={() => {
-                  setActivoPorAprobar(null);
-                  setMovimiento({ ...movimiento, persona: '', monto: '', descripcion: '', referencia: '', clasificacion: '', caja_destino_id: '' });
-                }} 
-                className="text-[10px] text-rose-400 font-bold hover:text-white transition-colors"
-              >
-                ✖ CANCELAR
-              </button>
-            </div>
-          )}
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
             
