@@ -83,12 +83,7 @@ export async function POST(request: Request) {
               body: JSON.stringify({
                 estado: 'Pendiente',
                 imagen_base64: base64Image,
-                referencia: caption || `TG-${update.message.message_id}`,
-                metadata: {
-                  telegram_user_id: userId,
-                  telegram_username: update.message.from.username,
-                  chat_id: chatId
-                }
+                referencia: caption || `TG-${userId}-${update.message.message_id}`
               })
             });
 
