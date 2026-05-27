@@ -82,7 +82,7 @@ export async function POST(request: Request) {
             const aiRes = await fetch(`${NEXT_PUBLIC_APP_URL}/api/leer-recibo`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ imageBase64: base64Image, mimeType: 'image/jpeg' })
+              body: JSON.stringify({ imageBase64: base64Image, mimeType: 'image/jpeg', textoAdicional: caption || '' })
             });
             if (aiRes.ok) {
               datosIA = await aiRes.json();

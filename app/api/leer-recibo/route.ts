@@ -39,7 +39,7 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   let urlIntentada = '(no construida)';
   try {
-    const { imageBase64, mimeType } = await req.json();
+    const { imageBase64, mimeType, textoAdicional = '' } = await req.json();
 
     if (!imageBase64 || !mimeType) {
       return NextResponse.json({ error: 'Imagen requerida' }, { status: 400 });
@@ -56,20 +56,68 @@ export async function POST(req: NextRequest) {
     const urlLog = urlIntentada.replace(apiKey, '***KEY***');
     console.log('🌐 POST →', urlLog);
 
-    const prompt = `Analiza este comprobante o capture bancario y extrae EXACTAMENTE estos 5 datos en formato JSON plano, sin texto adicional, sin markdown, sin bloques de código:
+    const hoy = new Date().toISOString().split('T')[0];
+    const prompt = `Eres un asistente financiero avanzado de una empresa venezolana. Tu trabajo es extraer datos financieros de DOS tipos de entrada:
+
+TIPO 1 — IMAGEN: Si recibes una imagen de un comprobante bancario, léela y extrae todos los datos visibles.
+TIPO 2 — FORMULARIO DE TEXTO: Si recibes texto escrito por el usuario (con viñetas, guiones, pares clave:valor, o texto libre), interpreta cada línea como un campo del registro financiero.
+
+Texto del usuario: "${textoAdicional}"
+Fecha actual de referencia: ${hoy}
+
+REGLAS DE PRIORIDAD ABSOLUTA DEL TEXTO SOBRE LA IMAGEN (CORRECCIONES MANUALES):
+1. El "Texto del usuario" representa correcciones o especificaciones manuales y TIENE PRIORIDAD ABSOLUTA (100%) sobre cualquier información visual presente en la imagen.
+2. Si existe alguna discrepancia o conflicto entre lo que dice la imagen y lo que escribe el usuario, debes elegir SIEMPRE el dato especificado por el usuario para sobreescribir el campo correspondiente.
+3. EJEMPLOS CRÍTICOS DE PRIORIDAD:
+   - Si la imagen muestra un beneficiario que es un número de cédula, RIF, número de cuenta o un nombre genérico (como "PAGO MOVIL"), pero el usuario escribe un nombre en su texto (ej. "Pedro Pérez" o "beneficiario: Pedro Pérez"), el campo "beneficiario" DEBE ser "Pedro Pérez".
+   - Si la imagen muestra un concepto genérico como "Pago", "Transferencia" o "Débito", pero el usuario escribe algo específico (ej. "pago de electricidad" o "concepto: pago de electricidad"), el campo "descripcion" DEBE ser "pago de electricidad".
+   - Si la imagen muestra un monto de "100" pero el usuario escribe "monto: 50" o "fueron 50", el campo "monto" DEBE ser 50.00.
+   - Si la imagen muestra una fecha pero el usuario escribe "esto fue ayer" o "fecha: 2026-05-25", debes usar la fecha indicada por el usuario (calculada adecuadamente si usa términos relativos como "hoy", "ayer" o "antier" a partir de la fecha de referencia ${hoy}).
+4. Fusión Inteligente: Los campos de datos que NO hayan sido corregidos o especificados en el "Texto del usuario" deben ser leídos y extraídos con normalidad desde la imagen. Ambas fuentes se complementan, pero el texto del usuario tiene la última palabra.
+
+REGLAS DE INTERPRETACIÓN DE TEXTO:
+- Si el usuario escribe "pago a [nombre]" o "pagué a [nombre]", entonces beneficiario = [nombre] y clasificacion = "Egreso".
+- Si el usuario escribe "cobro de [nombre]" o "cobré a [nombre]" o "me pagó [nombre]", entonces beneficiario = [nombre] y clasificacion = "Ingreso".
+- Las líneas con formato "clave: valor", "clave - valor", o "- clave: valor" deben interpretarse como campos del formulario.
+- Sinónimos comunes: "persona" o "cliente" o "proveedor" = beneficiario. "ref" o "nro" o "comprobante" = referencia. "concepto" o "motivo" o "por" = descripcion. "tipo" = clasificacion.
+
+REGLAS DE DATOS:
+1. "monto": SIEMPRE positivo, sin símbolos de moneda. Usa punto para decimales (ej: 1500.50).
+2. "moneda": Si ves "$", "USD", "dólares" o "Zelle" → "USD". Si no se especifica → "Bs".
+3. "fecha": Formato YYYY-MM-DD. Acepta formatos como "24/05/2025", "24-05-2025", "mayo 24", "hoy", "ayer". Si no se menciona fecha, usa ${hoy}.
+4. "beneficiario": Nombre de la persona o empresa. NUNCA dejar vacío si el usuario mencionó algún nombre.
+5. "referencia": Número de referencia, comprobante o confirmación. Si no hay, devuelve null.
+6. "banco_target": Banco receptor (Banesco, Mercantil, Provincial, BDV, Venezuela, Bicentenario, Tesoro, Exterior, etc.).
+7. "descripcion": Resumen breve de la operación.
+8. "clasificacion": "Ingreso" o "Egreso". Si dice pago/pagué/compra/gasto → Egreso. Si dice cobro/venta/ingreso/me pagaron → Ingreso.
+9. "metodo": Detectar método de pago:
+   - Número de teléfono (04XX) o "Pago Móvil" → "Pago Móvil"
+   - "Transferencia" o número de cuenta → "Transferencia"
+   - "Zelle" → "Zelle"
+   - "Tarjeta de débito" o "TDD" o "débito" → "Tarjeta de Débito"
+   - "Tarjeta de crédito" o "TDC" o "crédito" → "Tarjeta de Crédito"
+   - "Efectivo" o "cash" → "Efectivo"
+   - "Cheque" → "Cheque"
+   - Si no se especifica → null
+10. "categoria": Clasificación general (Servicios, Nómina, Ventas, Compras, Alquiler, Cuentas por Pagar, Cuentas por Cobrar, Impuestos, Otros).
+11. "estatus": "Pagado" si es egreso confirmado. "Cobrado" si es ingreso confirmado. "Por Pagar" o "Por Cobrar" si se menciona como pendiente.
+
+Si falta información y no se puede inferir, usa null para ese campo.
+Retorna SOLAMENTE un objeto JSON plano, sin backticks de markdown ni bloques de código.
+
 {
-  "fecha": "<fecha de la operación en formato YYYY-MM-DD>",
-  "beneficiario": "<nombre completo de la persona o empresa que RECIBE el dinero. Buscar etiquetas como 'Para', 'A', 'Destinatario', 'Beneficiario', 'Cliente', 'Pagado a'. Si es una transferencia recibida, usa el remitente ('De', 'Origen', 'Remitente'). Devuelve SOLO el nombre, en MAYÚSCULAS>",
-  "referencia": "<número de operación, referencia, comprobante, autorización o transacción>",
-  "monto": <número decimal sin separadores de miles, ejemplo: 1500.50>,
-  "descripcion": "<concepto, motivo o descripción de la operación. Buscar etiquetas como 'Concepto', 'Motivo', 'Descripción', 'Detalle', 'Asunto'. Si no aparece, usa una descripción corta tipo 'Transferencia desde [BANCO]' o 'Pago móvil'>",
-  "banco": "<nombre del banco emisor del comprobante, opcional>"
-}
-Reglas:
-- Si no puedes determinar un valor con certeza, usa null (no inventes).
-- "beneficiario" debe ser una persona/empresa, NO un banco ni un número de cuenta.
-- "monto" debe ser número (no string), sin símbolos de moneda.
-Responde SOLO el JSON, sin texto extra.`;
+  "fecha": "YYYY-MM-DD",
+  "monto": 0.00,
+  "moneda": "Bs",
+  "beneficiario": null,
+  "referencia": null,
+  "banco_target": null,
+  "descripcion": null,
+  "clasificacion": null,
+  "metodo": null,
+  "categoria": null,
+  "estatus": null
+}`;
 
     const payload = {
       contents: [
