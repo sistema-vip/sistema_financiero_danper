@@ -35,6 +35,103 @@ export default function AdminFinanzasPage() {
   const [crucePendiente, setCrucePendiente] = useState<{item: any, tabla: string, nuevoEstatus: string} | null>(null);
   const [busquedaCruce, setBusquedaCruce] = useState('');
 
+  // Cola "Por Aprobar"
+  const [colaPorAprobar, setColaPorAprobar] = useState<any[]>([]);
+  const [activoPorAprobar, setActivoPorAprobar] = useState<any>(null);
+  const [loadingCola, setLoadingCola] = useState(false);
+  const [isSavingDraft, setIsSavingDraft] = useState(false);
+
+  const cargarColaPorAprobar = async () => {
+    setLoadingCola(true);
+    try {
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/movimientos_por_aprobar?estado=eq.Pendiente&order=created_at.desc`, { headers: SUPABASE_HEADERS });
+      if (res.ok) setColaPorAprobar(await res.json());
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoadingCola(false);
+    }
+  };
+
+  const seleccionarParaAprobar = (item: any) => {
+    setActivoPorAprobar(item);
+    
+    // Auto-detectar tipo según el monto (si es negativo, Egreso; si no, Ingreso)
+    const tipoEstimado = item.monto < 0 ? 'Recibo de Egreso' : 'Recibo de Ingreso';
+    const montoAbsVal = Math.abs(item.monto || 0);
+
+    setMovimiento(prev => ({
+      ...prev,
+      fecha: item.fecha || new Date().toISOString().split('T')[0],
+      caja_id: prev.caja_id || '', // Preservar la caja seleccionada si la hay
+      caja_destino_id: '',
+      referencia: item.referencia || '',
+      persona: (item.persona || '').toUpperCase(),
+      monto: montoAbsVal > 0 ? montoAbsVal.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '',
+      moneda: item.moneda || 'Bs',
+      tipo: tipoEstimado,
+      clasificacion: '',
+      descripcion: item.descripcion || ''
+    }));
+  };
+
+  const rechazarPorAprobar = async (id: string) => {
+    if (!confirm("⚠️ ¿Estás seguro de que deseas rechazar y descartar este comprobante?")) return;
+    try {
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/movimientos_por_aprobar?id=eq.${id}`, {
+        method: 'PATCH',
+        headers: SUPABASE_HEADERS,
+        body: JSON.stringify({ estado: 'Rechazado' })
+      });
+      if (res.ok) {
+        alert("❌ Comprobante descartado.");
+        if (activoPorAprobar?.id === id) setActivoPorAprobar(null);
+        cargarColaPorAprobar();
+      } else {
+        alert("Ocurrió un error al descartar el comprobante.");
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const guardarComoPorAprobar = async () => {
+    const montoNum = parsearNumeroBD(movimiento.monto);
+    if (montoNum <= 0) return alert("⚠️ Ingrese un monto válido para guardar en cola");
+    
+    setIsSavingDraft(true);
+    try {
+      const payloadDraft = {
+        fecha: movimiento.fecha,
+        persona: movimiento.persona.toUpperCase() || 'MANUAL DRAFT',
+        referencia: movimiento.referencia || 'S/R',
+        monto: movimiento.tipo === 'Recibo de Egreso' ? -montoNum : montoNum,
+        moneda: movimiento.moneda,
+        descripcion: movimiento.descripcion || 'Borrador guardado manualmente',
+        estado: 'Pendiente'
+      };
+      
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/movimientos_por_aprobar`, {
+        method: 'POST',
+        headers: SUPABASE_HEADERS,
+        body: JSON.stringify(payloadDraft)
+      });
+      
+      if (res.ok) {
+        alert("📥 Borrador guardado con éxito en la cola 'Por aprobar'.");
+        setMovimiento({ ...movimiento, persona: '', monto: '', descripcion: '', referencia: '', clasificacion: '', caja_destino_id: '' });
+        cargarColaPorAprobar();
+      } else {
+        const err = await res.json();
+        throw new Error(err.message || 'Error de esquema');
+      }
+    } catch (e: any) {
+      alert("❌ Error al guardar borrador:\n" + e.message);
+    } finally {
+      setIsSavingDraft(false);
+    }
+  };
+
   // Estado principal
   const [movimiento, setMovimiento] = useState({
     fecha: new Date().toISOString().split('T')[0], caja_id: '', caja_destino_id: '', referencia: '',
@@ -43,6 +140,7 @@ export default function AdminFinanzasPage() {
 
   useEffect(() => {
     cargarCajas(); cargarClasificaciones(); cargarProveedores(); cargarClientes(); obtenerUltimoRecibo();
+    cargarColaPorAprobar();
   }, []);
 
   useEffect(() => {
@@ -278,6 +376,17 @@ export default function AdminFinanzasPage() {
         }
       }
 
+      // Si proviene de la cola de aprobación, marcarla como aprobada y limpiar el base64 de la BD
+      if (activoPorAprobar) {
+        await fetch(`${SUPABASE_URL}/rest/v1/movimientos_por_aprobar?id=eq.${activoPorAprobar.id}`, {
+          method: 'PATCH',
+          headers: SUPABASE_HEADERS,
+          body: JSON.stringify({ estado: 'Aprobado', imagen_base64: null })
+        });
+        setActivoPorAprobar(null);
+        cargarColaPorAprobar();
+      }
+
       setTicketImpresion(datosTicket); 
       setMovimiento({ ...movimiento, persona: '', monto: '', descripcion: '', referencia: '', clasificacion: '', caja_destino_id: '' });
       setCrucePendiente(null);
@@ -397,13 +506,15 @@ export default function AdminFinanzasPage() {
         }
       `}</style>
       
-      <div className="animate-in fade-in duration-300 max-w-6xl mx-auto px-4 space-y-8 pb-10 print:hidden mt-6">
+      <div className="animate-in fade-in duration-300 max-w-7xl mx-auto px-4 space-y-8 pb-10 print:hidden mt-6">
         <div className="flex items-center gap-3 mb-8 border-b border-[#334155] pb-4">
           <span className="text-3xl">💸</span>
           <div><h2 className="text-2xl font-bold text-white uppercase tracking-tight">Registro de Movimiento</h2><p className="text-[#38bdf8] text-xs font-bold tracking-widest uppercase">Admin. y Finanzas</p></div>
         </div>
         
-        <div className="bg-[#1e293b] p-8 rounded-2xl border border-[#334155] shadow-xl relative">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
+          {/* Columna Izquierda: Formulario (2/3 de ancho) */}
+          <div className="lg:col-span-2 bg-[#1e293b] p-8 rounded-2xl border border-[#334155] shadow-xl relative">
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 border-b border-[#334155] pb-4 gap-4">
             <div className="flex flex-wrap gap-3">
               <button onClick={() => setMovimiento({...movimiento, tipo: 'Recibo de Ingreso', caja_destino_id: ''})} className={`px-4 py-2 rounded-lg font-bold text-xs uppercase transition-all ${movimiento.tipo === 'Recibo de Ingreso' ? 'bg-emerald-500 text-white shadow-[0_0_15px_rgba(16,185,129,0.4)]' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}>📥 Ingreso</button>
@@ -453,6 +564,43 @@ export default function AdminFinanzasPage() {
               </div>
             )}
           </div>
+          {/* Vista previa de Capture de la cola de Aprobación */}
+          {activoPorAprobar && (
+            <div className="mb-6 bg-black/40 p-4 rounded-xl border border-dashed border-[#38bdf8]/40 flex flex-col gap-3 animate-in slide-in-from-top-4 duration-300">
+              <div className="flex justify-between items-center">
+                <span className="text-[10px] text-[#38bdf8] font-bold uppercase tracking-widest flex items-center gap-1.5">
+                  📸 Vista Previa del Comprobante (Cola)
+                  <span className="bg-[#38bdf8]/20 text-[#38bdf8] text-[9px] px-2 py-0.5 rounded font-mono font-bold">
+                    Ref: {activoPorAprobar.referencia}
+                  </span>
+                </span>
+                <button 
+                  onClick={() => {
+                    setActivoPorAprobar(null);
+                    setMovimiento({ ...movimiento, persona: '', monto: '', descripcion: '', referencia: '', clasificacion: '', caja_destino_id: '' });
+                  }} 
+                  className="text-[10px] text-rose-400 font-bold hover:text-white transition-colors"
+                >
+                  ✖ CERRAR Y LIMPIAR FORMULARIO
+                </button>
+              </div>
+              
+              {activoPorAprobar.imagen_base64 ? (
+                <div className="relative w-full max-h-[350px] overflow-y-auto rounded-lg bg-black/50 p-2 flex justify-center border border-[#334155] custom-scrollbar">
+                  <img 
+                    src={`data:image/jpeg;base64,${activoPorAprobar.imagen_base64}`} 
+                    alt="Comprobante de Pago" 
+                    className="max-w-full h-auto object-contain rounded-md"
+                  />
+                </div>
+              ) : (
+                <div className="text-center py-4 text-xs text-slate-500 italic bg-black/20 rounded-lg">
+                  El borrador no incluye imagen adjunta.
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
             
             <div>
@@ -555,13 +703,119 @@ export default function AdminFinanzasPage() {
               <input type="text" className="w-full h-[46px] px-4 bg-black/40 border border-[#334155] rounded-lg text-white" value={movimiento.descripcion} onChange={(e) => setMovimiento({...movimiento, descripcion: e.target.value})} placeholder="DETALLES ADICIONALES..." />
             </div>
           </div>
-          <div className="flex justify-center border-t border-[#334155] pt-6">
-            <button onClick={guardarMovimiento} disabled={isSaving} className={`px-12 py-4 text-white font-black rounded-xl transition-all shadow-lg uppercase tracking-widest text-sm ${isSaving ? 'bg-slate-600' : 'bg-[#10b981] hover:bg-emerald-400'}`}>
+          <div className="flex flex-col sm:flex-row justify-center gap-4 border-t border-[#334155] pt-6">
+            <button 
+              onClick={guardarComoPorAprobar} 
+              disabled={isSaving || isSavingDraft} 
+              className={`px-6 py-4 text-slate-300 font-bold rounded-xl transition-all border border-[#334155] hover:bg-slate-800 uppercase tracking-widest text-xs ${isSavingDraft ? 'opacity-50 cursor-not-allowed' : ''}`}
+            >
+              {isSavingDraft ? 'GUARDANDO...' : '📥 Guardar como "Por Aprobar"'}
+            </button>
+            <button 
+              onClick={guardarMovimiento} 
+              disabled={isSaving || isSavingDraft} 
+              className={`px-10 py-4 text-white font-black rounded-xl transition-all shadow-lg uppercase tracking-widest text-xs ${isSaving ? 'bg-slate-600' : 'bg-[#10b981] hover:bg-emerald-400'}`}>
               {isSaving ? 'PROCESANDO E IMPRIMIENDO...' : 'REGISTRAR E IMPRIMIR MOVIMIENTO'}
             </button>
           </div>
         </div>
+
+        {/* Columna Derecha: Cola "Por Aprobar" */}
+        <div className="bg-[#1e293b] p-6 rounded-2xl border border-[#334155] shadow-xl flex flex-col gap-6 lg:col-span-1">
+          <div>
+            <h3 className="text-md font-bold text-white uppercase tracking-wider flex items-center gap-2 mb-2">
+              📥 Por Aprobar
+              <span className="bg-amber-500/20 text-amber-400 text-xs px-2.5 py-0.5 rounded-full font-mono font-black border border-amber-500/30">
+                {colaPorAprobar.length}
+              </span>
+            </h3>
+            <p className="text-[10px] text-slate-400 uppercase tracking-widest leading-relaxed">
+              Comprobantes escaneados vía Telegram o borradores manuales esperando validación.
+            </p>
+          </div>
+
+          {loadingCola ? (
+            <div className="text-center py-8 text-xs text-slate-400 font-bold">
+              ⏳ Cargando cola de aprobación...
+            </div>
+          ) : colaPorAprobar.length === 0 ? (
+            <div className="text-center py-8 px-4 border border-dashed border-[#334155] rounded-xl text-xs text-slate-500 font-bold bg-black/10">
+              ✨ No hay comprobantes pendientes.
+            </div>
+          ) : (
+            <div className="flex flex-col gap-4 max-h-[600px] overflow-y-auto pr-1 custom-scrollbar">
+              {colaPorAprobar.map((item) => {
+                const isSelected = activoPorAprobar?.id === item.id;
+                const formatMonto = Number(Math.abs(item.monto || 0)).toLocaleString('de-DE', { minimumFractionDigits: 2 });
+                const esEgreso = item.monto < 0;
+
+                return (
+                  <div 
+                    key={item.id} 
+                    className={`p-4 rounded-xl border transition-all cursor-pointer relative group flex flex-col gap-2 ${
+                      isSelected 
+                        ? 'bg-[#38bdf8]/10 border-[#38bdf8] shadow-[0_0_15px_rgba(56,189,248,0.15)] animate-pulse' 
+                        : 'bg-black/30 border-[#334155] hover:border-slate-400 hover:bg-black/50'
+                    }`}
+                    onClick={() => seleccionarParaAprobar(item)}
+                  >
+                    <div className="flex justify-between items-start">
+                      <span className={`text-[9px] font-black px-2 py-0.5 rounded uppercase tracking-wider ${
+                        esEgreso ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30' : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                      }`}>
+                        {esEgreso ? 'Egreso' : 'Ingreso'}
+                      </span>
+                      <span className="text-[10px] text-slate-500 font-mono">{item.fecha}</span>
+                    </div>
+                    
+                    <div className="flex flex-col">
+                      <span className="font-bold text-white text-[11px] uppercase truncate" title={item.persona}>
+                        {item.persona || 'Socio o Tercero'}
+                      </span>
+                      <span className="text-[10px] text-slate-400 truncate">
+                        {item.descripcion || 'Sin descripción'}
+                      </span>
+                    </div>
+
+                    <div className="flex justify-between items-center border-t border-[#334155]/50 pt-2 mt-1">
+                      <div className="flex flex-col">
+                        <span className="text-[9px] text-slate-500 font-bold uppercase font-mono">Monto</span>
+                        <span className={`text-xs font-black font-mono ${esEgreso ? 'text-rose-400' : 'text-emerald-400'}`}>
+                          {formatMonto} {item.moneda || 'Bs'}
+                        </span>
+                      </div>
+                      {item.referencia && item.referencia !== 'S/R' && (
+                        <div className="text-right">
+                          <span className="text-[9px] text-slate-500 font-bold uppercase block">Ref.</span>
+                          <span className="text-[10px] font-bold font-mono text-slate-300">{item.referencia}</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Botón de descarte */}
+                    <button 
+                      onClick={(e) => { e.stopPropagation(); rechazarPorAprobar(item.id); }} 
+                      className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 px-1.5 py-0.5 bg-rose-500/20 hover:bg-rose-500 text-rose-400 hover:text-white text-[10px] font-bold rounded transition-all border border-rose-500/30"
+                      title="Descartar de la cola"
+                    >
+                      ✖
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          
+          {/* Botón rápido para refrescar */}
+          <button 
+            onClick={cargarColaPorAprobar} 
+            className="w-full py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-[#334155] rounded-xl font-bold text-[10px] uppercase tracking-widest transition-colors cursor-pointer"
+          >
+            🔄 Sincronizar Cola
+          </button>
+        </div>
       </div>
+    </div>
 
       {/* MODAL NUEVO PROVEEDOR ACTUALIZADO */}
       {modalProvOpen && (
