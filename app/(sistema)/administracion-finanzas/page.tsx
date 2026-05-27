@@ -40,6 +40,7 @@ export default function AdminFinanzasPage() {
   const [activoPorAprobar, setActivoPorAprobar] = useState<any>(null);
   const [loadingCola, setLoadingCola] = useState(false);
   const [isSavingDraft, setIsSavingDraft] = useState(false);
+  const [isReadingIA, setIsReadingIA] = useState(false);
 
   const cargarColaPorAprobar = async () => {
     setLoadingCola(true);
@@ -92,6 +93,34 @@ export default function AdminFinanzasPage() {
       }
     } catch (err) {
       console.error(err);
+    }
+  };
+
+  const leerComprobanteConIA = async () => {
+    if (!activoPorAprobar || !activoPorAprobar.imagen_base64) return;
+    setIsReadingIA(true);
+    try {
+      const res = await fetch('/api/leer-recibo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ imageBase64: activoPorAprobar.imagen_base64, mimeType: 'image/jpeg' })
+      });
+      
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Error al leer con IA');
+      
+      setMovimiento(prev => ({
+        ...prev,
+        fecha: data.fecha || prev.fecha,
+        persona: data.beneficiario || prev.persona,
+        referencia: data.referencia || prev.referencia,
+        monto: data.monto ? String(data.monto).replace('.', ',') : prev.monto,
+        descripcion: data.descripcion || prev.descripcion,
+      }));
+    } catch (e: any) {
+      alert("❌ Error de IA:\n" + e.message);
+    } finally {
+      setIsReadingIA(false);
     }
   };
 
@@ -574,15 +603,24 @@ export default function AdminFinanzasPage() {
                     Ref: {activoPorAprobar.referencia}
                   </span>
                 </span>
-                <button 
-                  onClick={() => {
-                    setActivoPorAprobar(null);
-                    setMovimiento({ ...movimiento, persona: '', monto: '', descripcion: '', referencia: '', clasificacion: '', caja_destino_id: '' });
-                  }} 
-                  className="text-[10px] text-rose-400 font-bold hover:text-white transition-colors"
-                >
-                  ✖ CERRAR Y LIMPIAR FORMULARIO
-                </button>
+                <div className="flex items-center gap-3">
+                  <button 
+                    onClick={leerComprobanteConIA}
+                    disabled={isReadingIA}
+                    className="text-[10px] bg-indigo-500 hover:bg-indigo-400 text-white px-3 py-1.5 rounded-md font-bold transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1 shadow-lg shadow-indigo-500/20"
+                  >
+                    {isReadingIA ? '⏳ ANALIZANDO...' : '✨ EXTRAER DATOS CON IA'}
+                  </button>
+                  <button 
+                    onClick={() => {
+                      setActivoPorAprobar(null);
+                      setMovimiento({ ...movimiento, persona: '', monto: '', descripcion: '', referencia: '', clasificacion: '', caja_destino_id: '' });
+                    }} 
+                    className="text-[10px] text-rose-400 font-bold hover:text-white transition-colors"
+                  >
+                    ✖ CERRAR
+                  </button>
+                </div>
               </div>
               
               {activoPorAprobar.imagen_base64 ? (
