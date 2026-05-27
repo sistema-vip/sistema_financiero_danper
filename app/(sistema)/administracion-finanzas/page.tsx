@@ -56,9 +56,16 @@ export default function AdminFinanzasPage() {
   const seleccionarParaAprobar = (item: any) => {
     setActivoPorAprobar(item);
     
-    // Auto-detectar tipo según el monto (si es negativo, Egreso; si no, Ingreso)
-    const tipoEstimado = item.monto < 0 ? 'Recibo de Egreso' : 'Recibo de Ingreso';
+    // Auto-detectar tipo según la IA (clasificacion) o el monto
+    let tipoEstimado = item.monto < 0 ? 'Recibo de Egreso' : 'Recibo de Ingreso';
+    if (item.clasificacion === 'Egreso') tipoEstimado = 'Recibo de Egreso';
+    if (item.clasificacion === 'Ingreso') tipoEstimado = 'Recibo de Ingreso';
+
     const montoAbsVal = Math.abs(item.monto || 0);
+
+    // Mapear categoría a clasificación del formulario si existe, sino usar clasificación de IA
+    let clasifForm = item.categoria || item.clasificacion || '';
+    if (clasifForm === 'Egreso' || clasifForm === 'Ingreso') clasifForm = '';
 
     setMovimiento(prev => ({
       ...prev,
@@ -70,7 +77,7 @@ export default function AdminFinanzasPage() {
       monto: montoAbsVal > 0 ? montoAbsVal.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '',
       moneda: item.moneda || 'Bs',
       tipo: tipoEstimado,
-      clasificacion: '',
+      clasificacion: clasifForm.toUpperCase(),
       descripcion: item.descripcion || ''
     }));
   };
