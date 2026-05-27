@@ -101,10 +101,12 @@ REGLAS DE PRIORIDAD ABSOLUTA DEL TEXTO SOBRE LA IMAGEN (CORRECCIONES MANUALES):
 4. Fusión Inteligente: Los campos de datos que NO hayan sido corregidos o especificados en el "Texto del usuario" deben ser leídos y extraídos con normalidad desde la imagen. Ambas fuentes se complementan, pero el texto del usuario tiene la última palabra.
 
 REGLAS DE INTERPRETACIÓN DE TEXTO:
+- Si el usuario escribe un nombre suelto (ej. "Juan Carlos"), asume que ese es el "beneficiario". NO lo pongas en "descripcion".
+- Si el usuario escribe una nota o comentario (ej. "pago de la luz"), concaténalo a la "descripcion" existente de la imagen.
 - Si el usuario escribe "pago a [nombre]" o "pagué a [nombre]", entonces beneficiario = [nombre] y clasificacion = "Egreso".
 - Si el usuario escribe "cobro de [nombre]" o "cobré a [nombre]" o "me pagó [nombre]", entonces beneficiario = [nombre] y clasificacion = "Ingreso".
-- Las líneas con formato "clave: valor", "clave - valor", o "- clave: valor" deben interpretarse como campos del formulario.
-- Sinónimos comunes: "persona" o "cliente" o "proveedor" = beneficiario. "ref" o "nro" o "comprobante" = referencia. "concepto" o "motivo" o "por" = descripcion. "tipo" = clasificacion.
+- Las líneas con formato "clave: valor", "clave - valor", o "- clave: valor" deben interpretarse directamente como el campo respectivo.
+- Sinónimos comunes: "persona" o "cliente" o "proveedor" = beneficiario. "ref" o "nro" o "comprobante" = referencia. "concepto" o "motivo" o "por" o "nota" = descripcion. "tipo" = clasificacion.
 
 REGLAS DE DATOS:
 1. "monto": SIEMPRE positivo, sin símbolos de moneda. Usa punto para decimales (ej: 1500.50).
@@ -171,10 +173,11 @@ Retorna SOLAMENTE un objeto JSON plano, sin backticks de markdown ni bloques de 
 
           // 3. Guardar en Supabase (movimientos_por_aprobar)
           if (SUPABASE_URL) {
+            const fallbackRef = `TG-${userId}-${update.message.message_id}`;
             const payload: any = {
               estado: 'Pendiente',
               imagen_base64: base64Image,
-              referencia: datosIA.referencia || caption || `TG-${userId}-${update.message.message_id}`,
+              referencia: datosIA.referencia || fallbackRef,
               fecha: datosIA.fecha || undefined,
               persona: datosIA.beneficiario || undefined,
               monto: datosIA.monto ? parseFloat(datosIA.monto) : undefined,
