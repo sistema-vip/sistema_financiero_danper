@@ -1,9 +1,8 @@
 import { NextResponse } from 'next/server';
+import { SUPABASE_URL, SUPABASE_HEADERS } from '@/app/config';
 
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const NEXT_PUBLIC_APP_URL = process.env.NEXT_PUBLIC_APP_URL;
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
 // Para restringir quién puede enviar, el usuario puede configurar esto en su .env
 const envAllowedUsers = process.env.TELEGRAM_ALLOWED_USERS || process.env.AUTHORIZED_TELEGRAM_USERS;
@@ -77,15 +76,10 @@ export async function POST(request: Request) {
           const base64Image = buffer.toString('base64');
 
           // 3. Guardar en Supabase (movimientos_por_aprobar)
-          if (SUPABASE_URL && SUPABASE_ANON_KEY) {
+          if (SUPABASE_URL) {
             const insertRes = await fetch(`${SUPABASE_URL}/rest/v1/movimientos_por_aprobar`, {
               method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'apikey': SUPABASE_ANON_KEY,
-                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                'Prefer': 'return=representation'
-              },
+              headers: SUPABASE_HEADERS,
               body: JSON.stringify({
                 estado: 'Pendiente',
                 imagen_base64: base64Image,
