@@ -95,7 +95,7 @@ export async function POST(request: Request) {
             if (!insertRes.ok) {
               const err = await insertRes.text();
               console.error('Error insertando en Supabase:', err);
-              await sendMessage(chatId, "Hubo un error al guardar el comprobante en el sistema.");
+              await sendMessage(chatId, `Hubo un error al guardar el comprobante en el sistema:\n\n${err}`);
             } else {
               await sendMessage(chatId, "✅ Comprobante recibido y enviado a la cola 'Por Aprobar'.");
             }
