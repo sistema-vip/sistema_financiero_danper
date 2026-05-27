@@ -108,12 +108,12 @@ REGLAS DE INTERPRETACIÓN DE TEXTO:
 - Las líneas con formato "clave: valor", "clave - valor", o "- clave: valor" deben interpretarse directamente como el campo respectivo.
 - Sinónimos comunes: "persona" o "cliente" o "proveedor" = beneficiario. "ref" o "nro" o "comprobante" = referencia. "concepto" o "motivo" o "por" o "nota" = descripcion. "tipo" = clasificacion.
 
-REGLAS DE DATOS:
-1. "monto": SIEMPRE positivo, sin símbolos de moneda. Usa punto para decimales (ej: 1500.50).
-2. "moneda": Si ves "$", "USD", "dólares" o "Zelle" → "USD". Si no se especifica → "Bs".
+REGLAS DE DATOS (PRECISIÓN OCR EXTREMA):
+1. "monto": Extrae el monto EXACTO que aparece en el recibo. Usa punto para decimales (ej: 1500.50). NUNCA redondees.
+2. "moneda": SIEMPRE asume "Bs" (Bolívares) para transferencias nacionales o Pago Móvil en Venezuela (ej. Banesco, Mercantil, BDV, etc.). Solo usa "USD" si el comprobante es de Zelle, Binance, o dice explícitamente dólares.
 3. "fecha": Formato YYYY-MM-DD. Acepta formatos como "24/05/2025", "24-05-2025", "mayo 24", "hoy", "ayer". Si no se menciona fecha, usa ${hoy}.
-4. "beneficiario": Nombre de la persona o empresa. NUNCA dejar vacío si el usuario mencionó algún nombre.
-5. "referencia": Número de referencia, comprobante o confirmación. Si no hay, devuelve null.
+4. "beneficiario": Nombre de la persona o empresa.
+5. "referencia": Extrae EXACTAMENTE el número de referencia, confirmación o recibo, sin omitir ni inventar dígitos. Busca etiquetas como "Ref", "Referencia", "Recibo". Si no hay, devuelve null.
 6. "banco_target": Banco receptor (Banesco, Mercantil, Provincial, BDV, Venezuela, Bicentenario, Tesoro, Exterior, etc.).
 7. "descripcion": Resumen breve de la operación.
 8. "clasificacion": "Ingreso" o "Egreso". Si dice pago/pagué/compra/gasto → Egreso. Si dice cobro/venta/ingreso/me pagaron → Ingreso.

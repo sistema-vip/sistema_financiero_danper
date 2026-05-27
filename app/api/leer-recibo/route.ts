@@ -76,17 +76,19 @@ REGLAS DE PRIORIDAD ABSOLUTA DEL TEXTO SOBRE LA IMAGEN (CORRECCIONES MANUALES):
 4. Fusión Inteligente: Los campos de datos que NO hayan sido corregidos o especificados en el "Texto del usuario" deben ser leídos y extraídos con normalidad desde la imagen. Ambas fuentes se complementan, pero el texto del usuario tiene la última palabra.
 
 REGLAS DE INTERPRETACIÓN DE TEXTO:
+- Si el usuario escribe un nombre suelto (ej. "Juan Carlos"), asume que ese es el "beneficiario". NO lo pongas en "descripcion".
+- Si el usuario escribe una nota o comentario (ej. "pago de la luz"), concaténalo a la "descripcion" existente de la imagen.
 - Si el usuario escribe "pago a [nombre]" o "pagué a [nombre]", entonces beneficiario = [nombre] y clasificacion = "Egreso".
 - Si el usuario escribe "cobro de [nombre]" o "cobré a [nombre]" o "me pagó [nombre]", entonces beneficiario = [nombre] y clasificacion = "Ingreso".
-- Las líneas con formato "clave: valor", "clave - valor", o "- clave: valor" deben interpretarse como campos del formulario.
-- Sinónimos comunes: "persona" o "cliente" o "proveedor" = beneficiario. "ref" o "nro" o "comprobante" = referencia. "concepto" o "motivo" o "por" = descripcion. "tipo" = clasificacion.
+- Las líneas con formato "clave: valor", "clave - valor", o "- clave: valor" deben interpretarse directamente como el campo respectivo.
+- Sinónimos comunes: "persona" o "cliente" o "proveedor" = beneficiario. "ref" o "nro" o "comprobante" = referencia. "concepto" o "motivo" o "por" o "nota" = descripcion. "tipo" = clasificacion.
 
-REGLAS DE DATOS:
-1. "monto": SIEMPRE positivo, sin símbolos de moneda. Usa punto para decimales (ej: 1500.50).
-2. "moneda": Si ves "$", "USD", "dólares" o "Zelle" → "USD". Si no se especifica → "Bs".
+REGLAS DE DATOS (PRECISIÓN OCR EXTREMA):
+1. "monto": Extrae el monto EXACTO que aparece en el recibo. Usa punto para decimales (ej: 1500.50). NUNCA redondees.
+2. "moneda": SIEMPRE asume "Bs" (Bolívares) para transferencias nacionales o Pago Móvil en Venezuela (ej. Banesco, Mercantil, BDV, etc.). Solo usa "USD" si el comprobante es de Zelle, Binance, o dice explícitamente dólares.
 3. "fecha": Formato YYYY-MM-DD. Acepta formatos como "24/05/2025", "24-05-2025", "mayo 24", "hoy", "ayer". Si no se menciona fecha, usa ${hoy}.
-4. "beneficiario": Nombre de la persona o empresa. NUNCA dejar vacío si el usuario mencionó algún nombre.
-5. "referencia": Número de referencia, comprobante o confirmación. Si no hay, devuelve null.
+4. "beneficiario": Nombre de la persona o empresa.
+5. "referencia": Extrae EXACTAMENTE el número de referencia, confirmación o recibo, sin omitir ni inventar dígitos. Busca etiquetas como "Ref", "Referencia", "Recibo". Si no hay, devuelve null.
 6. "banco_target": Banco receptor (Banesco, Mercantil, Provincial, BDV, Venezuela, Bicentenario, Tesoro, Exterior, etc.).
 7. "descripcion": Resumen breve de la operación.
 8. "clasificacion": "Ingreso" o "Egreso". Si dice pago/pagué/compra/gasto → Egreso. Si dice cobro/venta/ingreso/me pagaron → Ingreso.
