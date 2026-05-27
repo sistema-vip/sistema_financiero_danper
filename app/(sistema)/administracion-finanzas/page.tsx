@@ -40,7 +40,6 @@ export default function AdminFinanzasPage() {
   const [activoPorAprobar, setActivoPorAprobar] = useState<any>(null);
   const [loadingCola, setLoadingCola] = useState(false);
   const [isSavingDraft, setIsSavingDraft] = useState(false);
-  const [isReadingIA, setIsReadingIA] = useState(false);
 
   const cargarColaPorAprobar = async () => {
     setLoadingCola(true);
@@ -93,34 +92,6 @@ export default function AdminFinanzasPage() {
       }
     } catch (err) {
       console.error(err);
-    }
-  };
-
-  const leerComprobanteConIA = async () => {
-    if (!activoPorAprobar || !activoPorAprobar.imagen_base64) return;
-    setIsReadingIA(true);
-    try {
-      const res = await fetch('/api/leer-recibo', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ imageBase64: activoPorAprobar.imagen_base64, mimeType: 'image/jpeg' })
-      });
-      
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Error al leer con IA');
-      
-      setMovimiento(prev => ({
-        ...prev,
-        fecha: data.fecha || prev.fecha,
-        persona: data.beneficiario || prev.persona,
-        referencia: data.referencia || prev.referencia,
-        monto: data.monto ? String(data.monto).replace('.', ',') : prev.monto,
-        descripcion: data.descripcion || prev.descripcion,
-      }));
-    } catch (e: any) {
-      alert("❌ Error de IA:\n" + e.message);
-    } finally {
-      setIsReadingIA(false);
     }
   };
 
@@ -593,49 +564,21 @@ export default function AdminFinanzasPage() {
               </div>
             )}
           </div>
-          {/* Vista previa de Capture de la cola de Aprobación */}
+          {/* Indicador de comprobante seleccionado */}
           {activoPorAprobar && (
-            <div className="mb-6 bg-black/40 p-4 rounded-xl border border-dashed border-[#38bdf8]/40 flex flex-col gap-3 animate-in slide-in-from-top-4 duration-300">
-              <div className="flex justify-between items-center">
-                <span className="text-[10px] text-[#38bdf8] font-bold uppercase tracking-widest flex items-center gap-1.5">
-                  📸 Vista Previa del Comprobante (Cola)
-                  <span className="bg-[#38bdf8]/20 text-[#38bdf8] text-[9px] px-2 py-0.5 rounded font-mono font-bold">
-                    Ref: {activoPorAprobar.referencia}
-                  </span>
-                </span>
-                <div className="flex items-center gap-3">
-                  <button 
-                    onClick={leerComprobanteConIA}
-                    disabled={isReadingIA}
-                    className="text-[10px] bg-indigo-500 hover:bg-indigo-400 text-white px-3 py-1.5 rounded-md font-bold transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1 shadow-lg shadow-indigo-500/20"
-                  >
-                    {isReadingIA ? '⏳ ANALIZANDO...' : '✨ EXTRAER DATOS CON IA'}
-                  </button>
-                  <button 
-                    onClick={() => {
-                      setActivoPorAprobar(null);
-                      setMovimiento({ ...movimiento, persona: '', monto: '', descripcion: '', referencia: '', clasificacion: '', caja_destino_id: '' });
-                    }} 
-                    className="text-[10px] text-rose-400 font-bold hover:text-white transition-colors"
-                  >
-                    ✖ CERRAR
-                  </button>
-                </div>
-              </div>
-              
-              {activoPorAprobar.imagen_base64 ? (
-                <div className="relative w-full max-h-[350px] overflow-y-auto rounded-lg bg-black/50 p-2 flex justify-center border border-[#334155] custom-scrollbar">
-                  <img 
-                    src={`data:image/jpeg;base64,${activoPorAprobar.imagen_base64}`} 
-                    alt="Comprobante de Pago" 
-                    className="max-w-full h-auto object-contain rounded-md"
-                  />
-                </div>
-              ) : (
-                <div className="text-center py-4 text-xs text-slate-500 italic bg-black/20 rounded-lg">
-                  El borrador no incluye imagen adjunta.
-                </div>
-              )}
+            <div className="mb-6 flex justify-between items-center bg-[#38bdf8]/10 p-3 rounded-lg border border-[#38bdf8]/40 animate-in slide-in-from-top-2 duration-300">
+              <span className="text-xs text-[#38bdf8] font-bold flex items-center gap-2">
+                ✨ Editando comprobante de la cola
+              </span>
+              <button 
+                onClick={() => {
+                  setActivoPorAprobar(null);
+                  setMovimiento({ ...movimiento, persona: '', monto: '', descripcion: '', referencia: '', clasificacion: '', caja_destino_id: '' });
+                }} 
+                className="text-[10px] text-rose-400 font-bold hover:text-white transition-colors"
+              >
+                ✖ CANCELAR
+              </button>
             </div>
           )}
 

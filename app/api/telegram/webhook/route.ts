@@ -75,16 +75,44 @@ export async function POST(request: Request) {
           const buffer = Buffer.from(arrayBuffer);
           const base64Image = buffer.toString('base64');
 
+          // 2.5 Llamar a Gemini (IA) para extraer datos
+          let datosIA: any = {};
+          let msgIA = '';
+          try {
+            const aiRes = await fetch(`${NEXT_PUBLIC_APP_URL}/api/leer-recibo`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ imageBase64: base64Image, mimeType: 'image/jpeg' })
+            });
+            if (aiRes.ok) {
+              datosIA = await aiRes.json();
+              msgIA = `\n🤖 Leído: ${datosIA.beneficiario || '-'} | ${datosIA.monto ? 'Bs ' + datosIA.monto : '-'}`;
+            } else {
+              console.error('Error de IA en webhook:', await aiRes.text());
+            }
+          } catch (e) {
+            console.error('Error llamando a IA:', e);
+          }
+
           // 3. Guardar en Supabase (movimientos_por_aprobar)
           if (SUPABASE_URL) {
+            const payload: any = {
+              estado: 'Pendiente',
+              imagen_base64: base64Image,
+              referencia: datosIA.referencia || caption || `TG-${userId}-${update.message.message_id}`,
+              fecha: datosIA.fecha || undefined,
+              persona: datosIA.beneficiario || undefined,
+              monto: datosIA.monto ? parseFloat(datosIA.monto) : undefined,
+              descripcion: datosIA.descripcion || undefined
+            };
+            
+            // Eliminar claves undefined para evitar errores
+            Object.keys(payload).forEach(key => payload[key] === undefined && delete payload[key]);
+
             const insertRes = await fetch(`${SUPABASE_URL}/rest/v1/movimientos_por_aprobar`, {
               method: 'POST',
               headers: SUPABASE_HEADERS,
-              body: JSON.stringify({
-                estado: 'Pendiente',
-                imagen_base64: base64Image,
-                referencia: caption || `TG-${userId}-${update.message.message_id}`
-              })
+              body: JSON.stringify(payload)
             });
 
             if (!insertRes.ok) {
@@ -92,7 +120,7 @@ export async function POST(request: Request) {
               console.error('Error insertando en Supabase:', err);
               await sendMessage(chatId, `Hubo un error al guardar el comprobante en el sistema:\n\n${err}`);
             } else {
-              await sendMessage(chatId, "✅ Comprobante recibido y enviado a la cola 'Por Aprobar'.");
+              await sendMessage(chatId, `✅ Comprobante recibido y enviado a la cola 'Por Aprobar'.${msgIA}`);
             }
           } else {
              console.error('Faltan credenciales de Supabase en el webhook de Telegram');
