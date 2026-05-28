@@ -90,23 +90,18 @@ TIPO 2 — FORMULARIO DE TEXTO: Si recibes texto escrito por el usuario (con vi�
 Texto del usuario: "${caption || ''}"
 Fecha actual de referencia: ${hoy}
 
-REGLAS DE PRIORIDAD ABSOLUTA DEL TEXTO SOBRE LA IMAGEN (CORRECCIONES MANUALES):
-1. El "Texto del usuario" representa correcciones o especificaciones manuales y TIENE PRIORIDAD ABSOLUTA (100%) sobre cualquier información visual presente en la imagen.
-2. Si existe alguna discrepancia o conflicto entre lo que dice la imagen y lo que escribe el usuario, debes elegir SIEMPRE el dato especificado por el usuario para sobreescribir el campo correspondiente.
-3. EJEMPLOS CRÍTICOS DE PRIORIDAD:
-   - Si la imagen muestra un beneficiario que es un número de cédula, RIF, número de cuenta o un nombre genérico (como "PAGO MOVIL"), pero el usuario escribe un nombre en su texto (ej. "Pedro Pérez" o "beneficiario: Pedro Pérez"), el campo "beneficiario" DEBE ser "Pedro Pérez".
-   - Si la imagen muestra un concepto genérico como "Pago", "Transferencia" o "Débito", pero el usuario escribe algo específico (ej. "pago de electricidad" o "concepto: pago de electricidad"), el campo "descripcion" DEBE ser "pago de electricidad".
-   - Si la imagen muestra un monto de "100" pero el usuario escribe "monto: 50" o "fueron 50", el campo "monto" DEBE ser 50.00.
-   - Si la imagen muestra una fecha pero el usuario escribe "esto fue ayer" o "fecha: 2026-05-25", debes usar la fecha indicada por el usuario (calculada adecuadamente si usa términos relativos como "hoy", "ayer" o "antier" a partir de la fecha de referencia ${hoy}).
-4. Fusión Inteligente: Los campos de datos que NO hayan sido corregidos o especificados en el "Texto del usuario" deben ser leídos y extraídos con normalidad desde la imagen. Ambas fuentes se complementan, pero el texto del usuario tiene la última palabra.
+REGLAS DE PRIORIDAD (TEXTO VS IMAGEN):
+1. LA IMAGEN ES LA FUENTE PRIMARIA: Extrae todos los datos del comprobante gráfico como tu fuente principal.
+2. SOBREESCRITURA EXPLICITA: El "Texto del usuario" SOLO sobreescribe o modifica un campo extraído de la imagen si incluye una ETIQUETA EXPLICITA en formato "clave: valor".
+   Ejemplos válidos de etiquetas que reemplazan datos de la imagen:
+   - "beneficiario: Pedro Pérez" -> Reemplaza el beneficiario.
+   - "ref: 12345" o "referencia: 12345" -> Reemplaza la referencia.
+   - "monto: 50" -> Reemplaza el monto.
+   - "concepto: pago luz" o "descripcion: pago luz" -> Reemplaza la descripcion.
+3. TEXTO LIBRE (SIN ETIQUETA): Si el usuario envía texto sin formato de "clave: valor" (ej. un nombre suelto "Pedro Pérez", un comentario "pago de luz", un número suelto "500"), NO modifiques los campos extraídos de la imagen. Solo concatena ese texto libre a la "descripcion" como una nota adicional. No intentes adivinar si el nombre suelto es el beneficiario a menos que use la etiqueta "beneficiario:".
 
-REGLAS DE INTERPRETACIÓN DE TEXTO:
-- Si el usuario escribe un nombre suelto (ej. "Juan Carlos"), asume que ese es el "beneficiario". NO lo pongas en "descripcion".
-- Si el usuario escribe una nota o comentario (ej. "pago de la luz"), concaténalo a la "descripcion" existente de la imagen.
-- Si el usuario escribe "pago a [nombre]" o "pagué a [nombre]", entonces beneficiario = [nombre] y clasificacion = "Egreso".
-- Si el usuario escribe "cobro de [nombre]" o "cobré a [nombre]" o "me pagó [nombre]", entonces beneficiario = [nombre] y clasificacion = "Ingreso".
-- Las líneas con formato "clave: valor", "clave - valor", o "- clave: valor" deben interpretarse directamente como el campo respectivo.
-- Sinónimos comunes: "persona" o "cliente" o "proveedor" = beneficiario. "ref" o "nro" o "comprobante" = referencia. "concepto" o "motivo" o "por" o "nota" = descripcion. "tipo" = clasificacion.
+REGLAS DE INTERPRETACIÓN DE TEXTO ETIQUETADO:
+- Etiquetas válidas: "beneficiario", "persona", "cliente", "proveedor" (asignan a beneficiario); "ref", "referencia", "nro", "comprobante" (asignan a referencia); "concepto", "motivo", "por", "nota", "descripcion" (asignan a descripcion); "tipo", "clasificacion" (asignan a clasificacion); "fecha", "monto", "banco", "moneda".
 
 REGLAS DE DATOS (PRECISIÓN OCR EXTREMA):
 1. "monto": Extrae el monto EXACTO que aparece en el recibo. Usa punto para decimales (ej: 1500.50). NUNCA redondees.
