@@ -30,9 +30,9 @@ export default function AdminFinanzasPage() {
   const [modalCruzarOpen, setModalCruzarOpen] = useState(false);
   const [tipoCruce, setTipoCruce] = useState<'cxc'|'cxp'|'socio-cobrar'|'socio-pagar'>('cxc');
   const [pendientesCruce, setPendientesCruce] = useState<any[]>([]);
-  const [itemCruceTarget, setItemCruceTarget] = useState<any>(null);
+  const [itemsCruceTarget, setItemsCruceTarget] = useState<any[]>([]);
   const [loadingCruce, setLoadingCruce] = useState(false);
-  const [crucePendiente, setCrucePendiente] = useState<{item: any, tabla: string, nuevoEstatus: string} | null>(null);
+  const [cruces, setCruces] = useState<{item: any, tabla: string, nuevoEstatus: string}[]>([]);
   const [busquedaCruce, setBusquedaCruce] = useState('');
 
   // Cola "Por Aprobar"
@@ -325,7 +325,8 @@ export default function AdminFinanzasPage() {
         
         datosTicket = { ...payloadEgreso, tipo: 'TRANSFERENCIA INTERNA', nombre_caja: `${cajaOrigen.nombre} ➔ ${cajaDestino.nombre}`, valor_calculado: valorCalculadoFinal };
       } else {
-        const descCruce = crucePendiente ? ` [Cruzado con: ${crucePendiente.item.nro_documento || crucePendiente.item.referencia || 'S/N'}]` : '';
+        const refsCruces = cruces.map(c => c.item.nro_documento || c.item.referencia || 'S/N').join(', ');
+        const descCruce = cruces.length > 0 ? ` [Cruzado con: ${refsCruces}]` : '';
         const payload = { 
           nro_recibo: nroRecibo, fecha: movimiento.fecha, caja_id: movimiento.caja_id, referencia: movimiento.referencia || 'S/R', 
           persona: movimiento.persona.toUpperCase(), monto: montoNum, moneda: movimiento.moneda, tasa: tasaNum, 
@@ -343,11 +344,13 @@ export default function AdminFinanzasPage() {
         
         datosTicket = { ...payload, nombre_caja: cajasBD.find(c => c.id.toString() === movimiento.caja_id)?.nombre, valor_calculado: valorCalculadoFinal };
 
-        if (crucePendiente) {
-          await fetch(`${SUPABASE_URL}/rest/v1/${crucePendiente.tabla}?id=eq.${crucePendiente.item.id}`, {
-            method: 'PATCH', headers: SUPABASE_HEADERS,
-            body: JSON.stringify({ saldo_pendiente: 0, estatus: crucePendiente.nuevoEstatus })
-          });
+        if (cruces.length > 0) {
+          for (const cruce of cruces) {
+            await fetch(`${SUPABASE_URL}/rest/v1/${cruce.tabla}?id=eq.${cruce.item.id}`, {
+              method: 'PATCH', headers: SUPABASE_HEADERS,
+              body: JSON.stringify({ saldo_pendiente: 0, estatus: cruce.nuevoEstatus })
+            });
+          }
         } else {
           if (clasifNorm.includes('PRESTAMO') || clasifNorm.includes('PRÉSTAMO')) {
             if (movimiento.tipo === 'Recibo de Ingreso') {
@@ -399,7 +402,7 @@ export default function AdminFinanzasPage() {
 
       setTicketImpresion(datosTicket); 
       setMovimiento({ ...movimiento, persona: '', monto: '', descripcion: '', referencia: '', clasificacion: '', caja_destino_id: '' });
-      setCrucePendiente(null);
+      setCruces([]);
       obtenerUltimoRecibo(); 
       
       setTimeout(() => { 
@@ -464,7 +467,7 @@ export default function AdminFinanzasPage() {
   const abrirCruzar = async (tipo: 'cxc'|'cxp'|'socio-cobrar'|'socio-pagar') => {
     setModalCruzarOpen(true);
     setTipoCruce(tipo);
-    setItemCruceTarget(null);
+    setItemsCruceTarget([]);
     setBusquedaCruce('');
     setLoadingCruce(true);
     const urls: Record<string, string> = {
@@ -481,14 +484,17 @@ export default function AdminFinanzasPage() {
   };
 
   const confirmarCruce = async () => {
-    if (!itemCruceTarget) return;
+    if (itemsCruceTarget.length === 0) return;
     const esSocio = tipoCruce.startsWith('socio');
     const tabla = esSocio ? 'cuentas_socios' : tipoCruce === 'cxc' ? 'cuentas_por_cobrar' : 'cuentas_por_pagar';
     const nuevoEstatus = esSocio ? 'Compensado' : 'Pagado';
-    setCrucePendiente({ item: itemCruceTarget, tabla, nuevoEstatus });
-    alert(`✅ Cruce vinculado. Se aplicará al registrar el movimiento.`);
+    
+    const nuevosCruces = itemsCruceTarget.map(item => ({ item, tabla, nuevoEstatus }));
+    setCruces(prev => [...prev, ...nuevosCruces]);
+    
+    alert(`✅ ${nuevosCruces.length} cruce(s) vinculado(s). Se aplicarán al registrar el movimiento.`);
     setModalCruzarOpen(false);
-    setItemCruceTarget(null);
+    setItemsCruceTarget([]);
   };
 
   const esTransferencia = movimiento.tipo === 'Transferencia Interna';
@@ -542,28 +548,26 @@ export default function AdminFinanzasPage() {
                   <>📸 Cargar Capture</>
                 )}
               </button>
-              <div className="relative">
-                {crucePendiente ? (
-                  <div className="flex items-center gap-2">
-                    <span className="px-3 py-2 rounded-lg font-bold text-[10px] uppercase border border-emerald-500/40 bg-emerald-500/10 text-emerald-400">
-                      🔗 Cruzando con: {crucePendiente.item.nro_documento || crucePendiente.item.referencia || 'S/N'}
+              <div className="relative flex flex-wrap gap-2">
+                {cruces.length > 0 && cruces.map((cruce, idx) => (
+                  <div key={idx} className="flex items-center gap-1 bg-emerald-500/10 border border-emerald-500/40 rounded-lg pr-1">
+                    <span className="px-3 py-2 font-bold text-[10px] uppercase text-emerald-400">
+                      🔗 Cruzado: {cruce.item.nro_documento || cruce.item.referencia || 'S/N'}
                     </span>
-                    <button onClick={() => setCrucePendiente(null)} className="px-2 py-2 rounded-lg text-rose-400 hover:bg-rose-500/10 transition-colors" title="Quitar cruce">✖</button>
+                    <button onClick={() => setCruces(prev => prev.filter((_, i) => i !== idx))} className="px-2 py-1.5 rounded-md text-rose-400 hover:bg-rose-500/10 transition-colors" title="Quitar cruce">✖</button>
                   </div>
-                ) : (
-                  <>
-                    <button onClick={() => setDropdownCruzarOpen(v => !v)} className="flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-xs uppercase transition-all border border-purple-500/40 bg-purple-500/10 text-purple-300 hover:bg-purple-500/20 hover:border-purple-400">
-                      🔗 Cruzar con... {dropdownCruzarOpen ? '▲' : '▾'}
-                    </button>
-                    {dropdownCruzarOpen && (
-                      <div className="absolute z-50 left-0 top-full mt-1 flex flex-col bg-[#1e293b] border border-[#334155] rounded-xl shadow-2xl overflow-hidden w-52">
-                        <button onClick={() => { setDropdownCruzarOpen(false); abrirCruzar('cxc'); }} className="px-4 py-3 text-left text-xs font-bold text-[#38bdf8] hover:bg-[#38bdf8]/10 transition-colors">📥 Cuenta por Cobrar</button>
-                        <button onClick={() => { setDropdownCruzarOpen(false); abrirCruzar('cxp'); }} className="px-4 py-3 text-left text-xs font-bold text-rose-400 hover:bg-rose-500/10 transition-colors">📤 Cuenta por Pagar</button>
-                        <button onClick={() => { setDropdownCruzarOpen(false); abrirCruzar('socio-cobrar'); }} className="px-4 py-3 text-left text-xs font-bold text-emerald-400 hover:bg-emerald-500/10 transition-colors">🟢 Socio: Por Recibir</button>
-                        <button onClick={() => { setDropdownCruzarOpen(false); abrirCruzar('socio-pagar'); }} className="px-4 py-3 text-left text-xs font-bold text-amber-400 hover:bg-amber-500/10 transition-colors">🔴 Socio: Por Entregar</button>
-                      </div>
-                    )}
-                  </>
+                ))}
+                
+                <button onClick={() => setDropdownCruzarOpen(v => !v)} className="flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-xs uppercase transition-all border border-purple-500/40 bg-purple-500/10 text-purple-300 hover:bg-purple-500/20 hover:border-purple-400">
+                  🔗 Cruzar con... {dropdownCruzarOpen ? '▲' : '▾'}
+                </button>
+                {dropdownCruzarOpen && (
+                  <div className="absolute z-50 left-0 top-full mt-1 flex flex-col bg-[#1e293b] border border-[#334155] rounded-xl shadow-2xl overflow-hidden w-52">
+                    <button onClick={() => { setDropdownCruzarOpen(false); abrirCruzar('cxc'); }} className="px-4 py-3 text-left text-xs font-bold text-[#38bdf8] hover:bg-[#38bdf8]/10 transition-colors">📥 Cuenta por Cobrar</button>
+                    <button onClick={() => { setDropdownCruzarOpen(false); abrirCruzar('cxp'); }} className="px-4 py-3 text-left text-xs font-bold text-rose-400 hover:bg-rose-500/10 transition-colors">📤 Cuenta por Pagar</button>
+                    <button onClick={() => { setDropdownCruzarOpen(false); abrirCruzar('socio-cobrar'); }} className="px-4 py-3 text-left text-xs font-bold text-emerald-400 hover:bg-emerald-500/10 transition-colors">🟢 Socio: Por Recibir</button>
+                    <button onClick={() => { setDropdownCruzarOpen(false); abrirCruzar('socio-pagar'); }} className="px-4 py-3 text-left text-xs font-bold text-amber-400 hover:bg-amber-500/10 transition-colors">🔴 Socio: Por Entregar</button>
+                  </div>
                 )}
               </div>
             </div>
@@ -914,62 +918,66 @@ export default function AdminFinanzasPage() {
                   <h3 className="text-lg font-bold text-purple-400 uppercase tracking-tighter">🔗 Cruzar Movimiento</h3>
                   <p className="text-[10px] text-slate-400 mt-0.5 font-bold">{labelTipo[tipoCruce]}</p>
                 </div>
-                <button onClick={() => { setModalCruzarOpen(false); setItemCruceTarget(null); }} className="text-slate-500 hover:text-white text-xl transition-colors">✕</button>
+                <button onClick={() => { setModalCruzarOpen(false); setItemsCruceTarget([]); }} className="text-slate-500 hover:text-white text-xl transition-colors">✕</button>
               </div>
 
-              {!itemCruceTarget ? (
-                <>
-                  <div className="px-4 pt-4">
-                    <input
-                      type="text"
-                      placeholder="Buscar por nombre, concepto o referencia..."
-                      className="w-full bg-black/40 border border-[#334155] rounded-lg px-4 py-2.5 text-sm text-white focus:border-purple-500 outline-none transition-colors placeholder:text-slate-600"
-                      value={busquedaCruce}
-                      onChange={e => setBusquedaCruce(e.target.value)}
-                      autoFocus
-                    />
-                  </div>
-                  <div className="p-4 max-h-[52vh] overflow-y-auto space-y-2">
-                    {loadingCruce ? (
-                      <p className="text-center text-slate-400 py-8">Cargando pendientes...</p>
-                    ) : filtrados.length === 0 ? (
-                      <p className="text-center text-slate-400 py-8">No hay registros pendientes.</p>
-                    ) : filtrados.map(item => {
-                      const nombre = item.cliente || item.proveedor || item.socio || '—';
-                      const ref = item.nro_documento || 'S/R';
-                      const fecha = item.fecha_vencimiento || item.fecha_emision || '—';
-                      return (
-                        <button key={item.id} onClick={() => setItemCruceTarget(item)} className="w-full text-left bg-black/30 hover:bg-purple-500/10 border border-[#334155] hover:border-purple-500/40 rounded-xl p-4 transition-all">
-                          <div className="flex justify-between items-start">
-                            <div>
-                              <p className="font-bold text-white text-sm uppercase">{nombre}</p>
-                              <p className="text-[10px] text-slate-400 mt-0.5 truncate max-w-[260px]">{(item.concepto || '—').replace(/^auto-generado:\s*/i, '')}</p>
-                              <p className="text-[10px] font-mono text-[#38bdf8] mt-1">{ref} · {fecha}</p>
-                            </div>
-                            <div className="text-right shrink-0 ml-3">
-                              <p className="font-black font-mono text-sm text-white">{fmtLiq(parseFloat(item.saldo_pendiente))} <span className="text-[10px] font-normal">{item.moneda}</span></p>
-                              <span className="text-[9px] font-bold px-2 py-0.5 rounded mt-1 inline-block bg-amber-500/20 text-amber-400">{(item.estatus || 'Pendiente').toUpperCase()}</span>
-                            </div>
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </>
-              ) : (
-                <div className="p-6 space-y-4">
-                  <div className="bg-black/30 border border-purple-500/20 rounded-xl p-4 text-xs space-y-1">
-                    <p className="text-slate-400">Registro: <span className="text-white font-bold uppercase">{itemCruceTarget.cliente || itemCruceTarget.proveedor || itemCruceTarget.socio}</span></p>
-                    <p className="text-slate-400">Concepto: <span className="text-white">{(itemCruceTarget.concepto || '—').replace(/^auto-generado:\s*/i, '')}</span></p>
-                    <p className="text-slate-400">Saldo pendiente: <span className="font-mono font-bold text-white">{fmtLiq(parseFloat(itemCruceTarget.saldo_pendiente))} {itemCruceTarget.moneda}</span></p>
-                    <p className="text-amber-400 text-[11px] mt-2">⚠️ Al confirmar, este registro quedará marcado como <strong>{tipoCruce.startsWith('socio') ? 'Compensado' : 'Pagado'}</strong> con saldo 0.</p>
-                  </div>
-                  <div className="flex justify-between items-center pt-2 border-t border-[#334155]">
-                    <button onClick={() => setItemCruceTarget(null)} className="text-slate-400 font-bold hover:text-white text-xs transition-colors">← VOLVER</button>
-                    <button onClick={confirmarCruce} className="bg-purple-500 text-white px-6 py-2 rounded-lg font-black uppercase text-xs hover:bg-purple-400 shadow-lg">🔗 CONFIRMAR CRUCE</button>
-                  </div>
-                </div>
-              )}
+              <div className="px-4 pt-4">
+                <input
+                  type="text"
+                  placeholder="Buscar por nombre, concepto o referencia..."
+                  className="w-full bg-black/40 border border-[#334155] rounded-lg px-4 py-2.5 text-sm text-white focus:border-purple-500 outline-none transition-colors placeholder:text-slate-600"
+                  value={busquedaCruce}
+                  onChange={e => setBusquedaCruce(e.target.value)}
+                  autoFocus
+                />
+              </div>
+              <div className="p-4 max-h-[52vh] overflow-y-auto space-y-2">
+                {loadingCruce ? (
+                  <p className="text-center text-slate-400 py-8">Cargando pendientes...</p>
+                ) : filtrados.length === 0 ? (
+                  <p className="text-center text-slate-400 py-8">No hay registros pendientes.</p>
+                ) : filtrados.map(item => {
+                  const nombre = item.cliente || item.proveedor || item.socio || '—';
+                  const ref = item.nro_documento || 'S/R';
+                  const fecha = item.fecha_vencimiento || item.fecha_emision || '—';
+                  const isSelected = itemsCruceTarget.some(i => i.id === item.id);
+                  return (
+                    <button key={item.id} onClick={() => {
+                      setItemsCruceTarget(prev => 
+                        prev.some(i => i.id === item.id) 
+                          ? prev.filter(i => i.id !== item.id) 
+                          : [...prev, item]
+                      )
+                    }} className={`w-full text-left bg-black/30 hover:bg-purple-500/10 border ${isSelected ? 'border-purple-500 bg-purple-500/20' : 'border-[#334155] hover:border-purple-500/40'} rounded-xl p-4 transition-all relative`}>
+                      {isSelected && (
+                        <div className="absolute -top-2 -right-2 bg-purple-500 text-white w-6 h-6 rounded-full flex items-center justify-center font-bold text-xs border-2 border-[#1e293b]">✓</div>
+                      )}
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <p className="font-bold text-white text-sm uppercase">{nombre}</p>
+                          <p className="text-[10px] text-slate-400 mt-0.5 truncate max-w-[260px]">{(item.concepto || '—').replace(/^auto-generado:\s*/i, '')}</p>
+                          <p className="text-[10px] font-mono text-[#38bdf8] mt-1">{ref} · {fecha}</p>
+                        </div>
+                        <div className="text-right shrink-0 ml-3">
+                          <p className="font-black font-mono text-sm text-white">{fmtLiq(parseFloat(item.saldo_pendiente))} <span className="text-[10px] font-normal">{item.moneda}</span></p>
+                          <span className="text-[9px] font-bold px-2 py-0.5 rounded mt-1 inline-block bg-amber-500/20 text-amber-400">{(item.estatus || 'Pendiente').toUpperCase()}</span>
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+              
+              <div className="p-4 border-t border-[#334155] bg-black/20 flex justify-between items-center rounded-b-2xl">
+                <span className="text-xs text-slate-400 font-bold">Seleccionados: <span className="text-white">{itemsCruceTarget.length}</span></span>
+                <button 
+                  onClick={confirmarCruce} 
+                  disabled={itemsCruceTarget.length === 0}
+                  className={`px-6 py-2 rounded-lg font-black uppercase text-xs shadow-lg transition-colors ${itemsCruceTarget.length > 0 ? 'bg-purple-500 text-white hover:bg-purple-400' : 'bg-slate-700 text-slate-400 cursor-not-allowed'}`}
+                >
+                  🔗 Confirmar Cruce
+                </button>
+              </div>
             </div>
           </div>
         );
