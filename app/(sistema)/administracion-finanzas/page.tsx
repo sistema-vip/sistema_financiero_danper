@@ -373,7 +373,7 @@ export default function AdminFinanzasPage() {
           }
 
           if (clasifNorm.includes('MOVIMIENTO SOCIO') || clasifNorm.includes('PROVISION') || clasifNorm.includes('PROVISIÓN')) {
-            const tipoCompensacion = movimiento.tipo === 'Recibo de Egreso' ? 'Por Pagar' : 'Por Cobrar';
+            const tipoCompensacion = movimiento.tipo === 'Recibo de Egreso' ? 'Por Cobrar' : 'Por Pagar';
             await fetch(`${SUPABASE_URL}/rest/v1/cuentas_socios`, {
               method: 'POST', headers: SUPABASE_HEADERS, body: JSON.stringify({
                 socio: movimiento.persona.toUpperCase(), tipo: tipoCompensacion, nro_documento: movimiento.referencia || `REC-${nroRecibo}`,
